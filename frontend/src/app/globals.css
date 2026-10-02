@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f7f4ee;
+  --panel: #fffdf9;
+  --sunken: #efebe3;
+  --ink: #23201b;
+  --ink-soft: #6b645a;
+  --ink-faint: #9c9488;
+  --line: #e3ddd2;
+  --accent: #1f6f68;
+  --accent-soft: #dcece9;
+  --good: #2f7d4f;
+  --good-soft: #e1f0e6;
+  --mid: #a86a12;
+  --mid-soft: #f6ead6;
+  --bad: #b2453e;
+  --bad-soft: #f6e0dd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #171614;
+    --panel: #1f1d1a;
+    --sunken: #141311;
+    --ink: #ece7de;
+    --ink-soft: #a9a195;
+    --ink-faint: #756e64;
+    --line: #34302b;
+    --accent: #6cc3b9;
+    --accent-soft: #1d3432;
+    --good: #7cc795;
+    --good-soft: #1c2f23;
+    --mid: #e0a95a;
+    --mid-soft: #33291a;
+    --bad: #e58b83;
+    --bad-soft: #3a211f;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-panel: var(--panel);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-mid: var(--mid);
+  --color-mid-soft: var(--mid-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-newsreader);
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Prose for tutor replies and markdown views */
+.prose-enki {
+  font-family: var(--font-newsreader), Georgia, serif;
+  font-size: 1.075rem;
+  line-height: 1.65;
+}
+.prose-enki p { margin: 0.6em 0; }
+.prose-enki h1 { font-size: 1.5rem; font-weight: 600; margin: 0.4em 0 0.6em; }
+.prose-enki h2 { font-size: 1.2rem; font-weight: 600; margin: 1.2em 0 0.4em; }
+.prose-enki h3 { font-size: 1.05rem; font-weight: 600; margin: 1em 0 0.3em; }
+.prose-enki ul { list-style: disc; padding-left: 1.3em; margin: 0.5em 0; }
+.prose-enki ol { list-style: decimal; padding-left: 1.3em; margin: 0.5em 0; }
+.prose-enki li { margin: 0.2em 0; }
+.prose-enki strong { font-weight: 600; }
+.prose-enki em { font-style: italic; }
+.prose-enki a { color: var(--accent); text-decoration: underline; }
+.prose-enki blockquote { border-left: 3px solid var(--accent); padding-left: 0.9em; color: var(--ink-soft); margin: 0.6em 0; }
+.prose-enki code { font-family: var(--font-geist-mono), monospace; font-size: 0.85em; background: var(--sunken); padding: 0.1em 0.35em; border-radius: 4px; }
+.prose-enki pre { background: var(--sunken); border: 1px solid var(--line); padding: 0.8em 1em; border-radius: 8px; overflow-x: auto; margin: 0.7em 0; line-height: 1.45; }
+.prose-enki pre code { background: none; padding: 0; font-size: 0.82rem; }
+.prose-enki table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.95em; display: block; overflow-x: auto; }
+.prose-enki th, .prose-enki td { border: 1px solid var(--line); padding: 0.3em 0.6em; }

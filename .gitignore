@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Enki
+.playwright-mcp/
+!frontend/src/lib/

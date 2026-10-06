@@ -1,0 +1,58 @@
+[
+  {
+    "uuid": "c-queues",
+    "name": "Queues",
+    "created_at": "2026-09-01T10:00:00Z",
+    "updated_at": "2026-09-01T10:10:00Z",
+    "chat_messages": [
+      {"uuid": "q1", "sender": "human", "created_at": "2026-09-01T10:00:00Z", "text": "", "content": [{"type": "text", "text": "What is a queue?"}]},
+      {"uuid": "q2", "sender": "assistant", "created_at": "2026-09-01T10:00:05Z", "text": "", "content": [{"type": "thinking", "thinking": "..."}, {"type": "text", "text": "Formally, a queue is a first-in-first-out collection."}]},
+      {"uuid": "q3", "sender": "human", "created_at": "2026-09-01T10:01:00Z", "text": "I don't get it", "content": []},
+      {"uuid": "q4", "sender": "assistant", "created_at": "2026-09-01T10:01:05Z", "content": [{"type": "text", "text": "Think of it like a line at a coffee shop: the first person in is the first served. For example, if A, B, then C arrive, A is handled first."}]},
+      {"uuid": "q5", "sender": "human", "created_at": "2026-09-01T10:02:00Z", "content": [{"type": "text", "text": "Oh so the first one in leaves first?"}], "attachments": [{"file_name": "notes.txt", "extracted_content": "my notes"}]},
+      {"uuid": "q6", "sender": "assistant", "created_at": "2026-09-01T10:02:05Z", "content": [{"type": "text", "text": "Exactly — that's the whole idea."}]}
+    ]
+  },
+  {
+    "uuid": "c-stacks",
+    "name": "Stacks",
+    "created_at": "2026-09-05T09:00:00Z",
+    "updated_at": "2026-09-05T09:05:00Z",
+    "chat_messages": [
+      {"uuid": "s1", "parent_message_uuid": "00000000-0000-4000-8000-000000000000", "sender": "human", "created_at": "2026-09-05T09:00:00Z", "content": [{"type": "text", "text": "What is a stack?"}]},
+      {"uuid": "s2-old", "parent_message_uuid": "s1", "sender": "assistant", "created_at": "2026-09-05T09:00:05Z", "content": [{"type": "text", "text": "ABANDONED BRANCH: a stack is an abstract data type."}]},
+      {"uuid": "s2", "parent_message_uuid": "s1", "sender": "assistant", "created_at": "2026-09-05T09:00:30Z", "content": [{"type": "text", "text": "Think of it like a stack of plates: the last plate you put on is the first you take off."}]},
+      {"uuid": "s3", "parent_message_uuid": "s2", "sender": "human", "created_at": "2026-09-05T09:01:00Z", "content": [{"type": "text", "text": "So the last one in comes out first?"}]},
+      {"uuid": "s4", "parent_message_uuid": "s3", "sender": "assistant", "created_at": "2026-09-05T09:01:05Z", "content": [{"type": "text", "text": "Yes, last in, first out."}]}
+    ]
+  },
+  {
+    "uuid": "c-bonds",
+    "name": "Bond prices",
+    "created_at": "2026-09-10T18:00:00Z",
+    "updated_at": "2026-09-10T18:04:00Z",
+    "chat_messages": [
+      {"uuid": "b1", "sender": "human", "created_at": "2026-09-10T18:00:00Z", "content": [{"type": "text", "text": "Why do bond prices fall when interest rates rise?"}]},
+      {"uuid": "b2", "sender": "assistant", "created_at": "2026-09-10T18:00:05Z", "content": [{"type": "text", "text": "Think of it like an old phone: when a better model comes out, yours is worth less. For example, a 3% bond looks worse once new bonds pay 5%."}]},
+      {"uuid": "b3", "sender": "human", "created_at": "2026-09-10T18:01:00Z", "content": [{"type": "text", "text": "So the old bond pays less than new ones, so people pay less for it?"}]},
+      {"uuid": "b4", "sender": "assistant", "created_at": "2026-09-10T18:01:05Z", "content": [{"type": "text", "text": "Right."}]}
+    ]
+  },
+  {
+    "uuid": "c-email",
+    "name": "Email to landlord",
+    "created_at": "2026-09-12T08:00:00Z",
+    "updated_at": "2026-09-12T08:01:00Z",
+    "chat_messages": [
+      {"uuid": "e1", "sender": "human", "created_at": "2026-09-12T08:00:00Z", "content": [{"type": "text", "text": "Can you write a short email to my landlord about the broken heater?"}]},
+      {"uuid": "e2", "sender": "assistant", "created_at": "2026-09-12T08:00:05Z", "content": [{"type": "text", "text": "Sure. Subject: Broken heater…"}]}
+    ]
+  },
+  {
+    "uuid": "c-empty",
+    "name": "",
+    "created_at": "2026-09-13T08:00:00Z",
+    "updated_at": "2026-09-13T08:00:00Z",
+    "chat_messages": []
+  }
+]

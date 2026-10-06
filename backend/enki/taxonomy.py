@@ -54,6 +54,9 @@ VERDICT_DESCRIPTIONS: dict[str, str] = {
     "misconception": "Restates the idea incorrectly.",
 }
 
+# Stored (never produced by a judge) for a reply nothing followed: the chat ended, so there is no evidence either way.
+NO_SIGNAL = "no_signal"
+
 # The three-level understanding scale Jev scores on, lowest first.
 LEVELS = ["not_understood", "iffy", "understood"]
 LEVEL_DESCRIPTIONS = [

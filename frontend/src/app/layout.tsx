@@ -1,26 +1,25 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Newsreader } from "next/font/google";
+import { Figtree, Literata } from "next/font/google";
 import "./globals.css";
 import { AppStateProvider } from "@/components/AppState";
 import Sidebar from "@/components/Sidebar";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
-const newsreader = Newsreader({ variable: "--font-newsreader", subsets: ["latin"] });
+const figtree = Figtree({ variable: "--font-figtree", subsets: ["latin"] });
+const literata = Literata({ variable: "--font-literata", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Enki",
-  description: "A tutor that learns how you learn.",
+  description: "How you learn, read from your conversations with Claude.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${newsreader.variable} h-full antialiased`}>
+    <html lang="en" className={`${figtree.variable} ${literata.variable} h-full antialiased`}>
       <body className="h-full font-sans">
         <AppStateProvider>
-          <div className="flex h-full">
+          <div className="flex h-full flex-col md:flex-row">
             <Sidebar />
-            <main className="flex-1 min-w-0 h-full overflow-hidden">{children}</main>
+            <main className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</main>
           </div>
         </AppStateProvider>
       </body>

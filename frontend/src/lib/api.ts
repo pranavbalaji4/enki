@@ -2,14 +2,21 @@ import type { components } from "./api-types";
 
 type S = components["schemas"];
 export type NodeOut = S["NodeOut"];
-export type SessionOut = S["SessionOut"];
-export type MessageOut = S["MessageOut"];
+export type OverviewOut = S["OverviewOut"];
+export type TopicOut = S["TopicOut"];
+export type TopicDetailOut = S["TopicDetailOut"];
+export type ChatOut = S["ChatOut"];
+export type ChatSummaryOut = S["ChatSummaryOut"];
 export type AnnotationOut = S["AnnotationOut"];
 export type EpisodeOut = S["EpisodeOut"];
-export type ProfileOut = S["ProfileOut"];
-export type ProfileEditOut = S["ProfileEditOut"];
 export type PatternOut = S["PatternOut"];
+export type StickyOut = S["StickyOut"];
 export type InsightOut = S["InsightOut"];
+export type ImportOut = S["ImportOut"];
+export type Estimate = S["Estimate"];
+export type RunOut = S["RunOut"];
+export type AskMessageOut = S["AskMessageOut"];
+export type Mix = S["Mix"];
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -28,32 +35,37 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
+
 export const api = {
   tree: () => req<NodeOut[]>("/api/tree"),
-  createNode: (body: S["NodeCreate"]) => req<NodeOut>("/api/nodes", { method: "POST", body: JSON.stringify(body) }),
-  renameNode: (id: number, title: string) =>
-    req<NodeOut>(`/api/nodes/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
-  deleteNode: (id: number) => req<{ ok: boolean }>(`/api/nodes/${id}`, { method: "DELETE" }),
-  session: (id: number) => req<SessionOut>(`/api/sessions/${id}`),
-  wrapUp: (id: number) => req<{ ok: boolean }>(`/api/sessions/${id}/wrap-up`, { method: "POST" }),
-  profile: (nodeId: number) => req<ProfileOut>(`/api/profile/${nodeId}`),
-  editProfile: (nodeId: number, markdown: string) =>
-    req<ProfileEditOut>(`/api/profile/${nodeId}`, { method: "PUT", body: JSON.stringify({ markdown }) }),
-  insights: (status: string | null = "new") =>
-    req<InsightOut[]>(`/api/insights${status ? `?status=${status}` : "?status="}`),
+  renameNode: (id: number, title: string) => req<NodeOut>(`/api/nodes/${id}`, json("PATCH", { title })),
+  overview: () => req<OverviewOut>("/api/overview"),
+  topic: (id: number) => req<TopicDetailOut>(`/api/topics/${id}`),
+  chat: (id: number) => req<ChatOut>(`/api/chats/${id}`),
+  setLearning: (id: number, is_learning: boolean) => req<ChatSummaryOut>(`/api/chats/${id}`, json("PATCH", { is_learning })),
+  uploadExport: (file: File) =>
+    req<ImportOut>("/api/imports", { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } }),
+  estimate: (limit?: number) => req<Estimate>(`/api/analysis/estimate${limit ? `?limit=${limit}` : ""}`),
+  startAnalysis: (limit?: number) => req<RunOut>("/api/analysis", json("POST", { limit: limit ?? null })),
+  latestRun: () => req<RunOut | null>("/api/analysis/latest"),
+  insights: (kind?: string) => req<InsightOut[]>(`/api/insights?status=new${kind ? `&kind=${kind}` : ""}`),
   insightFeedback: (id: number, action: "confirm" | "reject" | "dismiss", note = "") =>
-    req<{ ok: boolean }>(`/api/insights/${id}/feedback`, { method: "POST", body: JSON.stringify({ action, note }) }),
+    req<{ ok: boolean }>(`/api/insights/${id}/feedback`, json("POST", { action, note })),
+  askHistory: () => req<AskMessageOut[]>("/api/ask"),
+  clearAsk: () => req<{ ok: boolean }>("/api/ask", { method: "DELETE" }),
 };
 
-export type StreamEvent =
+export type AskEvent =
   | { type: "user_message"; id: number }
+  | { type: "tool"; name: string; label: string }
   | { type: "delta"; text: string }
   | { type: "done"; id: number }
   | { type: "error"; message: string };
 
-/** POST a chat message and read the tutor's reply as server-sent events. */
-export async function streamMessage(sessionId: number, content: string, onEvent: (e: StreamEvent) => void) {
-  const res = await fetch(`${API_URL}/api/sessions/${sessionId}/messages`, {
+/** POST a question and read the answer as server-sent events. */
+export async function streamAsk(content: string, onEvent: (e: AskEvent) => void) {
+  const res = await fetch(`${API_URL}/api/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),

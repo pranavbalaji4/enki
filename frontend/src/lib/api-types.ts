@@ -21,23 +21,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/nodes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Node */
-        post: operations["create_node_api_nodes_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/nodes/{node_id}": {
         parameters: {
             query?: never;
@@ -56,15 +39,35 @@ export interface paths {
         patch: operations["update_node_api_nodes__node_id__patch"];
         trace?: never;
     };
-    "/api/sessions/{session_id}": {
+    "/api/imports": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Session */
-        get: operations["get_session_api_sessions__session_id__get"];
+        get?: never;
+        put?: never;
+        /**
+         * Import Export
+         * @description Body: the claude.ai export ZIP (or conversations.json) as raw bytes.
+         */
+        post: operations["import_export_api_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analysis/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Estimate */
+        get: operations["get_estimate_api_analysis_estimate_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -73,7 +76,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sessions/{session_id}/messages": {
+    "/api/analysis": {
         parameters: {
             query?: never;
             header?: never;
@@ -82,29 +85,84 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Send Message */
-        post: operations["send_message_api_sessions__session_id__messages_post"];
+        /** Start Analysis */
+        post: operations["start_analysis_api_analysis_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/sessions/{session_id}/wrap-up": {
+    "/api/analysis/latest": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Latest Run */
+        get: operations["latest_run_api_analysis_latest_get"];
         put?: never;
-        /** Wrap Up */
-        post: operations["wrap_up_api_sessions__session_id__wrap_up_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Overview */
+        get: operations["get_overview_api_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/topics/{topic_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Topic */
+        get: operations["get_topic_api_topics__topic_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chats/{chat_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Chat */
+        get: operations["get_chat_api_chats__chat_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Chat
+         * @description Override the classifier: include a chat it skipped (it's analyzed on the next run), or leave one out.
+         */
+        patch: operations["update_chat_api_chats__chat_id__patch"];
         trace?: never;
     };
     "/api/profile/{node_id}": {
@@ -154,6 +212,25 @@ export interface paths {
         /** Post Insight Feedback */
         post: operations["post_insight_feedback_api_insights__insight_id__feedback_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ask History */
+        get: operations["ask_history_api_ask_get"];
+        put?: never;
+        /** Ask Question */
+        post: operations["ask_question_api_ask_post"];
+        /** Clear Ask */
+        delete: operations["clear_ask_api_ask_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -211,6 +288,78 @@ export interface components {
                 [key: string]: number;
             } | null;
         };
+        /** AskIn */
+        AskIn: {
+            /** Content */
+            content: string;
+        };
+        /** AskMessageOut */
+        AskMessageOut: {
+            /** Id */
+            id: number;
+            /** Role */
+            role: string;
+            /** Content */
+            content: string;
+            /** Tools Used */
+            tools_used: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ChatOut */
+        ChatOut: {
+            chat: components["schemas"]["ChatSummaryOut"];
+            /** Breadcrumbs */
+            breadcrumbs: components["schemas"]["Crumb"][];
+            /** Topic Label */
+            topic_label: string | null;
+            /** Summary */
+            summary: string;
+            /** Claude Url */
+            claude_url: string | null;
+            /** Messages */
+            messages: components["schemas"]["MessageOut"][];
+            /** Annotations */
+            annotations: components["schemas"]["AnnotationOut"][];
+            /** Episodes */
+            episodes: components["schemas"]["EpisodeOut"][];
+        };
+        /** ChatSummaryOut */
+        ChatSummaryOut: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Status */
+            status: string;
+            /** Is Learning */
+            is_learning: boolean | null;
+            /** Judged Turns */
+            judged_turns: number;
+            /** Avg Understanding */
+            avg_understanding: number | null;
+            mix: components["schemas"]["Mix"];
+        };
+        /** ChatUpdate */
+        ChatUpdate: {
+            /** Is Learning */
+            is_learning: boolean;
+        };
+        /** Crumb */
+        Crumb: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+        };
         /** EpisodeOut */
         EpisodeOut: {
             /** Id */
@@ -236,10 +385,37 @@ export interface components {
             /** Prompting Moves */
             prompting_moves: string[];
         };
+        /** Estimate */
+        Estimate: {
+            /** Chats */
+            chats: number;
+            /** Turns */
+            turns: number;
+            /** Usd */
+            usd: number;
+            /** Breakdown */
+            breakdown: {
+                [key: string]: number;
+            };
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** ImportOut */
+        ImportOut: {
+            /** New */
+            new: number;
+            /** Updated */
+            updated: number;
+            /** Unchanged */
+            unchanged: number;
+            /** Empty */
+            empty: number;
+            /** Pending Chats */
+            pending_chats: number;
+            estimate: components["schemas"]["Estimate"];
         };
         /** InsightAction */
         InsightAction: {
@@ -296,17 +472,14 @@ export interface components {
              */
             created_at: string;
         };
-        /** NodeCreate */
-        NodeCreate: {
-            /** Parent Id */
-            parent_id?: number | null;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "folder" | "session";
-            /** Title */
-            title: string;
+        /** Mix */
+        Mix: {
+            /** Understood */
+            understood: number;
+            /** Iffy */
+            iffy: number;
+            /** Not Understood */
+            not_understood: number;
         };
         /** NodeOut */
         NodeOut: {
@@ -320,6 +493,8 @@ export interface components {
             title: string;
             /** Status */
             status: string;
+            /** Is Learning */
+            is_learning: boolean | null;
             /**
              * Created At
              * Format: date-time
@@ -337,6 +512,20 @@ export interface components {
              * @default false
              */
             move: boolean;
+        };
+        /** OverviewOut */
+        OverviewOut: {
+            snapshot: components["schemas"]["SnapshotOut"] | null;
+            stats: components["schemas"]["Stats"];
+            mix: components["schemas"]["Mix"];
+            /** Topics */
+            topics: components["schemas"]["TopicOut"][];
+            /** Global Patterns */
+            global_patterns: components["schemas"]["PatternOut"][];
+            /** Top Patterns */
+            top_patterns: components["schemas"]["PatternOut"][];
+            /** Stickies */
+            stickies: components["schemas"]["StickyOut"][];
         };
         /** PatternOut */
         PatternOut: {
@@ -358,6 +547,12 @@ export interface components {
             user_note: string;
             /** Source */
             source: string;
+            /** Scope Id */
+            scope_id: number | null;
+            /** Scope */
+            scope: string;
+            /** Topics */
+            topics: string[];
         };
         /** ProfileEdit */
         ProfileEdit: {
@@ -387,31 +582,69 @@ export interface components {
             patterns: components["schemas"]["PatternOut"][];
             /** Stickies */
             stickies: components["schemas"]["StickyOut"][];
-            /** Tutor Sees */
-            tutor_sees: string;
         };
-        /** SendMessage */
-        SendMessage: {
-            /** Content */
-            content: string;
+        /** RunOut */
+        RunOut: {
+            /** Id */
+            id: number;
+            /** Status */
+            status: string;
+            /** Stage */
+            stage: string;
+            /** Stage Done */
+            stage_done: number;
+            /** Stage Total */
+            stage_total: number;
+            /** Chats */
+            chats: number;
+            /** Counts */
+            counts: {
+                [key: string]: number;
+            };
+            /** Errors */
+            errors: string[];
+            /** Error */
+            error: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
-        /** SessionOut */
-        SessionOut: {
-            node: components["schemas"]["NodeOut"];
-            /** Path */
-            path: string;
-            /** Summary */
-            summary: string;
-            /** Messages */
-            messages: components["schemas"]["MessageOut"][];
-            /** Annotations */
-            annotations: components["schemas"]["AnnotationOut"][];
-            /** Episodes */
-            episodes: components["schemas"]["EpisodeOut"][];
-            /** Pending Jobs */
-            pending_jobs: number;
-            /** Failed Jobs */
-            failed_jobs: string[];
+        /** SnapshotOut */
+        SnapshotOut: {
+            /** Headline */
+            headline: string;
+            /** Summary Md */
+            summary_md: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** StartAnalysis */
+        StartAnalysis: {
+            /** Limit */
+            limit?: number | null;
+        };
+        /** Stats */
+        Stats: {
+            /** Chats */
+            chats: number;
+            /** Learning Chats */
+            learning_chats: number;
+            /** Analyzed Chats */
+            analyzed_chats: number;
+            /** Pending Chats */
+            pending_chats: number;
+            /** Topics */
+            topics: number;
         };
         /** StickyOut */
         StickyOut: {
@@ -419,12 +652,52 @@ export interface components {
             id: number;
             /** Session Id */
             session_id: number;
+            /** Chat Title */
+            chat_title: string;
             /** Concept */
             concept: string;
             /** Excerpt */
             excerpt: string;
             /** Why */
             why: string;
+        };
+        /** TopicDetailOut */
+        TopicDetailOut: {
+            topic: components["schemas"]["TopicOut"];
+            /** Summary */
+            summary: string;
+            /** Breadcrumbs */
+            breadcrumbs: components["schemas"]["Crumb"][];
+            /** Children */
+            children: components["schemas"]["TopicOut"][];
+            /** Patterns */
+            patterns: components["schemas"]["PatternOut"][];
+            /** Stickies */
+            stickies: components["schemas"]["StickyOut"][];
+            /** Chats */
+            chats: components["schemas"]["ChatSummaryOut"][];
+        };
+        /** TopicOut */
+        TopicOut: {
+            /** Id */
+            id: number;
+            /** Parent Id */
+            parent_id: number | null;
+            /** Title */
+            title: string;
+            /** Path */
+            path: string;
+            /** Chat Count */
+            chat_count: number;
+            /** Analyzed Count */
+            analyzed_count: number;
+            /** Judged Turns */
+            judged_turns: number;
+            /** Avg Understanding */
+            avg_understanding: number | null;
+            mix: components["schemas"]["Mix"];
+            /** Line */
+            line: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -464,39 +737,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NodeOut"][];
-                };
-            };
-        };
-    };
-    create_node_api_nodes_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NodeCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NodeOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -567,13 +807,11 @@ export interface operations {
             };
         };
     };
-    get_session_api_sessions__session_id__get: {
+    import_export_api_imports_post: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                session_id: number;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -584,7 +822,29 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionOut"];
+                    "application/json": components["schemas"]["ImportOut"];
+                };
+            };
+        };
+    };
+    get_estimate_api_analysis_estimate_get: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Estimate"];
                 };
             };
             /** @description Validation Error */
@@ -598,18 +858,153 @@ export interface operations {
             };
         };
     };
-    send_message_api_sessions__session_id__messages_post: {
+    start_analysis_api_analysis_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartAnalysis"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    latest_run_api_analysis_latest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"] | null;
+                };
+            };
+        };
+    };
+    get_overview_api_overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverviewOut"];
+                };
+            };
+        };
+    };
+    get_topic_api_topics__topic_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                session_id: number;
+                topic_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopicDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chat_api_chats__chat_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_chat_api_chats__chat_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: number;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SendMessage"];
+                "application/json": components["schemas"]["ChatUpdate"];
             };
         };
         responses: {
@@ -619,38 +1014,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    wrap_up_api_sessions__session_id__wrap_up_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ChatSummaryOut"];
                 };
             };
             /** @description Validation Error */
@@ -734,6 +1098,7 @@ export interface operations {
         parameters: {
             query?: {
                 status?: string | null;
+                kind?: string | null;
             };
             header?: never;
             path?: never;
@@ -792,6 +1157,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_history_api_ask_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AskMessageOut"][];
+                };
+            };
+        };
+    };
+    ask_question_api_ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_ask_api_ask_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

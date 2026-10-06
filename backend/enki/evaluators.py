@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 from .config import settings
 from .llm import get_llm
+from .llm_schemas import EvalResult
 from .taxonomy import LEVEL_DESCRIPTIONS, LEVELS, VERDICT_DESCRIPTIONS, VERDICT_SCORE
 
 log = logging.getLogger("enki.evaluators")
@@ -25,7 +26,7 @@ class Judgement:
     understanding: float  # 0-1 expected understanding
     confidence: float  # 0-1
     evaluator: str  # jev | claude | fake
-    level_probs: list[float] | None = None  # [not_understood, iffy, understood]
+    level_probs: list[float] | None = None  # [not_understood, iffy, understood]; Jev's are calibrated, Claude's are estimates
     signals: dict[str, float] = field(default_factory=dict)
     referenced_part: str | None = None
     reasoning: str = ""
@@ -39,21 +40,34 @@ def _clamp(x: float) -> float:
     return max(0.0, min(1.0, x))
 
 
+def _normalize(probs: list[float]) -> list[float] | None:
+    """The model's [not understood, iffy, understood]; None if it didn't return three usable numbers."""
+    if len(probs) != len(LEVELS):
+        return None
+    clean = [max(0.0, float(p)) for p in probs]
+    total = sum(clean)
+    return [round(p / total, 4) for p in clean] if total > 0 else None
+
+
+def judgement_from_eval(r: EvalResult) -> Judgement:
+    """Map a Claude (or FakeLLM) structured evaluation onto the shared Judgement."""
+    return Judgement(
+        verdict=r.verdict,
+        # An LLM's self-reported number isn't calibrated; blend it with the verdict prior.
+        understanding=round(0.5 * _clamp(r.understanding) + 0.5 * VERDICT_SCORE[r.verdict], 3),
+        confidence=_clamp(r.confidence),
+        evaluator="fake" if settings.fake_llm else "claude",
+        level_probs=_normalize(r.level_probs),
+        referenced_part=r.referenced_part or None,
+        reasoning=r.reasoning,
+    )
+
+
 class ClaudeEvaluator:
     """Structured-output judgement from the fast model (or the offline FakeLLM)."""
 
     def judge(self, question: str, reply: str, next_msg: str) -> Judgement:
-        llm = get_llm()
-        r = llm.evaluate_turn(question, reply, next_msg)
-        return Judgement(
-            verdict=r.verdict,
-            # An LLM's self-reported number isn't calibrated; blend it with the verdict prior.
-            understanding=round(0.5 * _clamp(r.understanding) + 0.5 * VERDICT_SCORE[r.verdict], 3),
-            confidence=_clamp(r.confidence),
-            evaluator="fake" if settings.fake_llm else "claude",
-            referenced_part=r.referenced_part or None,
-            reasoning=r.reasoning,
-        )
+        return judgement_from_eval(get_llm().evaluate_turn(question, reply, next_msg))
 
 
 class JevEvaluator:

@@ -6,22 +6,24 @@ from datetime import datetime
 from typing import Literal
 
 import anthropic
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from . import pipeline  # noqa: F401  (registers job handlers)
+from . import analysis  # noqa: F401  (registers the run_analysis job handler)
+from . import ask, views
 from .config import settings
-from .context import build_tutor_request, path_title, profile_slice, render_profile_md, stickies_under
+from .context import ancestors, path_title, render_profile_md, stickies_under
 from .db import SessionLocal, get_db, init_db
 from .evaluators import get_evaluator
 from .feedback import apply_profile_edit, insight_feedback
-from .jobs import Worker, enqueue
+from .importer import ExportError, read_export, store_chats
+from .jobs import Worker
 from .llm import LLMError, get_llm
-from .models import Episode, Insight, Job, Message, Node, Pattern, PatternEvidence, TurnAnnotation
+from .models import AnalysisRun, AskMessage, Episode, Insight, Message, Node, Pattern, PatternEvidence, TurnAnnotation
 
 log = logging.getLogger("enki.api")
 
@@ -49,19 +51,141 @@ class NodeOut(BaseModel):
     kind: str
     title: str
     status: str
+    is_learning: bool | None
     created_at: datetime
-
-
-class NodeCreate(BaseModel):
-    parent_id: int | None = None
-    kind: Literal["folder", "session"]
-    title: str
 
 
 class NodeUpdate(BaseModel):
     title: str | None = None
     parent_id: int | None = None
     move: bool = False  # parent_id=None is meaningful (move to root), so moving is explicit
+
+
+class Mix(BaseModel):
+    understood: int
+    iffy: int
+    not_understood: int
+
+
+class Estimate(BaseModel):
+    chats: int
+    turns: int
+    usd: float
+    breakdown: dict[str, float]
+
+
+class ImportOut(BaseModel):
+    new: int
+    updated: int
+    unchanged: int
+    empty: int
+    pending_chats: int
+    estimate: Estimate
+
+
+class StartAnalysis(BaseModel):
+    limit: int | None = None  # analyze only the N most recent pending chats
+
+
+class RunOut(BaseModel):
+    id: int
+    status: str
+    stage: str
+    stage_done: int
+    stage_total: int
+    chats: int
+    counts: dict[str, int]
+    errors: list[str]
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PatternOut(BaseModel):
+    id: int
+    claim: str
+    strategy: str
+    concept_type: str | None
+    confidence: float
+    evidence_count: int
+    user_status: str
+    user_note: str
+    source: str
+    scope_id: int | None
+    scope: str
+    topics: list[str]  # for cross-topic patterns: the topics it was seen in
+
+
+class StickyOut(BaseModel):
+    id: int
+    session_id: int
+    chat_title: str
+    concept: str
+    excerpt: str
+    why: str
+
+
+class TopicOut(BaseModel):
+    id: int
+    parent_id: int | None
+    title: str
+    path: str
+    chat_count: int
+    analyzed_count: int
+    judged_turns: int
+    avg_understanding: float | None
+    mix: Mix
+    line: str  # the global profile's one-liner for this topic
+
+
+class SnapshotOut(BaseModel):
+    headline: str
+    summary_md: str
+    created_at: datetime
+
+
+class Stats(BaseModel):
+    chats: int
+    learning_chats: int
+    analyzed_chats: int
+    pending_chats: int
+    topics: int
+
+
+class OverviewOut(BaseModel):
+    snapshot: SnapshotOut | None
+    stats: Stats
+    mix: Mix
+    topics: list[TopicOut]
+    global_patterns: list[PatternOut]
+    top_patterns: list[PatternOut]
+    stickies: list[StickyOut]
+
+
+class ChatSummaryOut(BaseModel):
+    id: int
+    title: str
+    started_at: datetime
+    status: str
+    is_learning: bool | None
+    judged_turns: int
+    avg_understanding: float | None
+    mix: Mix
+
+
+class Crumb(BaseModel):
+    id: int
+    title: str
+
+
+class TopicDetailOut(BaseModel):
+    topic: TopicOut
+    summary: str
+    breadcrumbs: list[Crumb]
+    children: list[TopicOut]
+    patterns: list[PatternOut]
+    stickies: list[StickyOut]
+    chats: list[ChatSummaryOut]
 
 
 class MessageOut(BaseModel):
@@ -77,12 +201,12 @@ class AnnotationOut(BaseModel):
     concept_type: str | None
     strategies: list[str]
     ordering: str | None
-    verdict: str | None
+    verdict: str | None  # no_signal: the chat ended on this reply
     understanding: float | None
     confidence: float | None
     referenced_part: str | None
     reasoning: str | None
-    evaluator: str | None
+    evaluator: str | None  # jev | claude | fake
     level_probs: list[float] | None  # P(not understood), P(iffy), P(understood)
     signals: dict[str, float] | None
 
@@ -101,39 +225,19 @@ class EpisodeOut(BaseModel):
     prompting_moves: list[str]
 
 
-class SessionOut(BaseModel):
-    node: NodeOut
-    path: str
+class ChatOut(BaseModel):
+    chat: ChatSummaryOut
+    breadcrumbs: list[Crumb]
+    topic_label: str | None
     summary: str
+    claude_url: str | None
     messages: list[MessageOut]
     annotations: list[AnnotationOut]
     episodes: list[EpisodeOut]
-    pending_jobs: int
-    failed_jobs: list[str]
 
 
-class SendMessage(BaseModel):
-    content: str
-
-
-class PatternOut(BaseModel):
-    id: int
-    claim: str
-    strategy: str
-    concept_type: str | None
-    confidence: float
-    evidence_count: int
-    user_status: str
-    user_note: str
-    source: str
-
-
-class StickyOut(BaseModel):
-    id: int
-    session_id: int
-    concept: str
-    excerpt: str
-    why: str
+class ChatUpdate(BaseModel):
+    is_learning: bool
 
 
 class ProfileOut(BaseModel):
@@ -143,7 +247,6 @@ class ProfileOut(BaseModel):
     markdown: str
     patterns: list[PatternOut]
     stickies: list[StickyOut]
-    tutor_sees: str  # the exact profile slice injected into the tutor prompt from here
 
 
 class ProfileEdit(BaseModel):
@@ -175,17 +278,32 @@ class InsightAction(BaseModel):
     note: str = ""
 
 
+class AskIn(BaseModel):
+    content: str
+
+
+class AskMessageOut(BaseModel):
+    id: int
+    role: str
+    content: str
+    tools_used: list[str]
+    created_at: datetime
+
+
 # ---------- helpers ----------
 
 def _node(db: Session, node_id: int, kind: str | None = None) -> Node:
     node = db.get(Node, node_id)
     if node is None or (kind and node.kind != kind):
-        raise HTTPException(404, f"{kind or 'node'} not found")
+        raise HTTPException(404, f"{'chat' if kind == 'session' else kind or 'node'} not found")
     return node
 
 
 def _node_out(n: Node) -> NodeOut:
-    return NodeOut(id=n.id, parent_id=n.parent_id, kind=n.kind, title=n.title, status=n.status, created_at=n.created_at)
+    return NodeOut(
+        id=n.id, parent_id=n.parent_id, kind=n.kind, title=n.title, status=n.status, is_learning=n.is_learning,
+        created_at=n.created_at,
+    )
 
 
 def _episode_out(e: Episode) -> EpisodeOut:
@@ -196,11 +314,22 @@ def _episode_out(e: Episode) -> EpisodeOut:
     )
 
 
-def _pattern_out(p: Pattern) -> PatternOut:
-    return PatternOut(
-        id=p.id, claim=p.claim, strategy=p.strategy, concept_type=p.concept_type, confidence=round(p.confidence, 3),
-        evidence_count=p.evidence_count, user_status=p.user_status, user_note=p.user_note, source=p.source,
+def _run_out(r: AnalysisRun) -> RunOut:
+    return RunOut(
+        id=r.id, status=r.status, stage=r.stage, stage_done=r.stage_done, stage_total=r.stage_total,
+        chats=len(r.chat_ids or []), counts=r.counts or {}, errors=r.errors or [], error=r.error,
+        created_at=r.created_at, updated_at=r.updated_at,
     )
+
+
+def _friendly_error(e: Exception) -> str:
+    if isinstance(e, anthropic.AuthenticationError):
+        return "Anthropic API key missing or invalid. Set ANTHROPIC_API_KEY in backend/.env (or ENKI_FAKE_LLM=1 to run offline)."
+    if isinstance(e, anthropic.RateLimitError):
+        return "Rate limited by the API — try again in a moment."
+    if isinstance(e, anthropic.APIConnectionError):
+        return "Couldn't reach the Anthropic API."
+    return str(e)
 
 
 # ---------- tree ----------
@@ -208,16 +337,6 @@ def _pattern_out(p: Pattern) -> PatternOut:
 @app.get("/api/tree", response_model=list[NodeOut])
 def get_tree(db: Session = Depends(get_db)):
     return [_node_out(n) for n in db.scalars(select(Node).order_by(Node.kind, Node.title))]
-
-
-@app.post("/api/nodes", response_model=NodeOut)
-def create_node(body: NodeCreate, db: Session = Depends(get_db)):
-    if body.parent_id is not None:
-        _node(db, body.parent_id, "folder")
-    node = Node(parent_id=body.parent_id, kind=body.kind, title=body.title.strip() or "Untitled")
-    db.add(node)
-    db.commit()
-    return _node_out(node)
 
 
 @app.patch("/api/nodes/{node_id}", response_model=NodeOut)
@@ -245,22 +364,70 @@ def delete_node(node_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-# ---------- sessions ----------
+# ---------- import + analysis ----------
 
-@app.get("/api/sessions/{session_id}", response_model=SessionOut)
-def get_session(session_id: int, db: Session = Depends(get_db)):
-    s = _node(db, session_id, "session")
-    msgs = db.scalars(select(Message).where(Message.session_id == s.id).order_by(Message.id))
-    anns = db.scalars(select(TurnAnnotation).where(TurnAnnotation.session_id == s.id))
-    eps = db.scalars(select(Episode).where(Episode.session_id == s.id).order_by(Episode.id))
-    pending = db.scalar(
-        select(func.count(Job.id)).where(Job.session_id == s.id, Job.status.in_(["queued", "running"]))
+@app.post("/api/imports", response_model=ImportOut)
+async def import_export(request: Request, db: Session = Depends(get_db)):
+    """Body: the claude.ai export ZIP (or conversations.json) as raw bytes."""
+    blob = await request.body()
+    if not blob:
+        raise HTTPException(400, "Empty upload")
+    if len(blob) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(413, f"Export is larger than {settings.max_upload_mb} MB")
+    try:
+        chats = read_export(blob)
+    except ExportError as e:
+        raise HTTPException(400, str(e))
+    r = store_chats(db, chats)
+    pending = analysis.pending_chat_ids(db)
+    return ImportOut(
+        new=r.new, updated=r.updated, unchanged=r.unchanged, empty=r.empty, pending_chats=len(pending),
+        estimate=Estimate(**analysis.estimate(db, pending)),
     )
-    failed = db.scalars(select(Job.error).where(Job.session_id == s.id, Job.status == "failed").order_by(Job.id.desc()).limit(3))
-    return SessionOut(
-        node=_node_out(s),
-        path=path_title(db, s),
-        summary=s.summary,
+
+
+@app.get("/api/analysis/estimate", response_model=Estimate)
+def get_estimate(limit: int | None = None, db: Session = Depends(get_db)):
+    return Estimate(**analysis.estimate(db, analysis.pending_chat_ids(db, limit)))
+
+
+@app.post("/api/analysis", response_model=RunOut)
+def start_analysis(body: StartAnalysis, db: Session = Depends(get_db)):
+    if not analysis.pending_chat_ids(db, body.limit):
+        raise HTTPException(400, "Nothing to analyze — import your claude.ai export first.")
+    return _run_out(analysis.start_run(db, body.limit))
+
+
+@app.get("/api/analysis/latest", response_model=RunOut | None)
+def latest_run(db: Session = Depends(get_db)):
+    r = db.scalars(select(AnalysisRun).order_by(AnalysisRun.id.desc()).limit(1)).first()
+    return _run_out(r) if r else None
+
+
+# ---------- insights pages ----------
+
+@app.get("/api/overview", response_model=OverviewOut)
+def get_overview(db: Session = Depends(get_db)):
+    return views.overview(db)
+
+
+@app.get("/api/topics/{topic_id}", response_model=TopicDetailOut)
+def get_topic(topic_id: int, db: Session = Depends(get_db)):
+    return views.topic_detail(db, _node(db, topic_id, "folder"))
+
+
+@app.get("/api/chats/{chat_id}", response_model=ChatOut)
+def get_chat(chat_id: int, db: Session = Depends(get_db)):
+    c = _node(db, chat_id, "session")
+    msgs = db.scalars(select(Message).where(Message.session_id == c.id).order_by(Message.id))
+    anns = list(db.scalars(select(TurnAnnotation).where(TurnAnnotation.session_id == c.id)))
+    eps = db.scalars(select(Episode).where(Episode.session_id == c.id).order_by(Episode.id))
+    return ChatOut(
+        chat=views.chat_summary(db, c, [a for a in anns if views.level_of(a) is not None]),
+        breadcrumbs=[Crumb(id=a.id, title=a.title) for a in reversed(ancestors(db, c))],
+        topic_label=c.topic_label,
+        summary=c.summary,
+        claude_url=f"https://claude.ai/chat/{c.external_id}" if c.source == "claude_ai" and c.external_id else None,
         messages=[MessageOut(id=m.id, role=m.role, content=m.content, created_at=m.created_at) for m in msgs],
         annotations=[
             AnnotationOut(
@@ -272,81 +439,20 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
             for a in anns
         ],
         episodes=[_episode_out(e) for e in eps],
-        pending_jobs=pending or 0,
-        failed_jobs=[f for f in failed if f],
     )
 
 
-def _sse(obj: dict) -> str:
-    return f"data: {json.dumps(obj)}\n\n"
-
-
-@app.post("/api/sessions/{session_id}/messages")
-def send_message(session_id: int, body: SendMessage, db: Session = Depends(get_db)):
-    s = _node(db, session_id, "session")
-    text = body.content.strip()
-    if not text:
-        raise HTTPException(400, "Empty message")
-
-    last = db.scalars(select(Message).where(Message.session_id == s.id).order_by(Message.id.desc()).limit(1)).first()
-    user_msg = Message(session_id=s.id, role="user", content=text)
-    db.add(user_msg)
-    if s.status == "reviewed":
-        s.status = "active"  # continuing after a wrap-up; the next wrap-up re-reviews the whole session
+@app.patch("/api/chats/{chat_id}", response_model=ChatSummaryOut)
+def update_chat(chat_id: int, body: ChatUpdate, db: Session = Depends(get_db)):
+    """Override the classifier: include a chat it skipped (it's analyzed on the next run), or leave one out."""
+    c = _node(db, chat_id, "session")
+    c.is_learning = body.is_learning
+    if body.is_learning and c.status == "skipped":
+        c.status = "pending"
+    elif not body.is_learning and c.status in ("pending", "failed"):
+        c.status = "skipped"
     db.commit()
-    if last is not None and last.role == "assistant":
-        # The learner's reply is the evidence for how the previous tutor turn landed.
-        enqueue(db, "evaluate_turn", {"assistant_id": last.id, "next_id": user_msg.id}, s.id)
-
-    system, messages = build_tutor_request(db, s)
-    user_msg_id = user_msg.id
-
-    def stream() -> Iterator[str]:
-        yield _sse({"type": "user_message", "id": user_msg_id})
-        parts: list[str] = []
-        try:
-            for chunk in get_llm().stream_tutor(system, messages):
-                parts.append(chunk)
-                yield _sse({"type": "delta", "text": chunk})
-        except (LLMError, anthropic.AnthropicError) as e:
-            log.warning("tutor stream failed: %s", e)
-            # Drop the unanswered user message so history stays user/assistant alternating.
-            with SessionLocal() as wdb:
-                m = wdb.get(Message, user_msg_id)
-                if m is not None:
-                    wdb.delete(m)
-                wdb.commit()
-            yield _sse({"type": "error", "message": _friendly_error(e)})
-            return
-        with SessionLocal() as wdb:
-            reply = Message(session_id=session_id, role="assistant", content="".join(parts))
-            wdb.add(reply)
-            wdb.commit()
-            enqueue(wdb, "tag_turn", {"message_id": reply.id}, session_id)
-            yield _sse({"type": "done", "id": reply.id})
-
-    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
-
-
-def _friendly_error(e: Exception) -> str:
-    if isinstance(e, anthropic.AuthenticationError):
-        return "Anthropic API key missing or invalid. Set ANTHROPIC_API_KEY in backend/.env (or ENKI_FAKE_LLM=1 to run offline)."
-    if isinstance(e, anthropic.RateLimitError):
-        return "Rate limited by the API — try again in a moment."
-    if isinstance(e, anthropic.APIConnectionError):
-        return "Couldn't reach the Anthropic API."
-    return str(e)
-
-
-@app.post("/api/sessions/{session_id}/wrap-up")
-def wrap_up(session_id: int, db: Session = Depends(get_db)):
-    s = _node(db, session_id, "session")
-    if not db.scalar(select(func.count(Message.id)).where(Message.session_id == s.id)):
-        raise HTTPException(400, "Nothing to review yet")
-    s.status = "reviewing"
-    db.commit()
-    enqueue(db, "review_session", {"session_id": s.id}, s.id)
-    return {"ok": True}
+    return views.chat_summary(db, c)
 
 
 # ---------- profile ----------
@@ -367,12 +473,8 @@ def get_profile(node_id: int, db: Session = Depends(get_db)):
         title=path_title(db, node) if node else "Global",
         summary=node.summary if node else "",
         markdown=render_profile_md(db, node),
-        patterns=[_pattern_out(p) for p in pats],
-        stickies=[
-            StickyOut(id=s.id, session_id=s.session_id, concept=s.concept, excerpt=s.excerpt, why=s.why)
-            for s in stickies_under(db, node)
-        ],
-        tutor_sees=profile_slice(db, node) if node else "",
+        patterns=[views.pattern_dict(db, p) for p in pats],
+        stickies=[views.sticky_dict(db, s) for s in stickies_under(db, node)],
     )
 
 
@@ -385,13 +487,15 @@ def edit_profile(node_id: int, body: ProfileEdit, db: Session = Depends(get_db))
         raise HTTPException(502, _friendly_error(e))
 
 
-# ---------- insights ----------
+# ---------- insight cards ----------
 
 @app.get("/api/insights", response_model=list[InsightOut])
-def list_insights(status: str | None = "new", db: Session = Depends(get_db)):
+def list_insights(status: str | None = "new", kind: str | None = None, db: Session = Depends(get_db)):
     q = select(Insight).order_by(Insight.created_at.desc()).limit(100)
     if status:
         q = q.where(Insight.status == status)
+    if kind:
+        q = q.where(Insight.kind == kind)
     out = []
     for i in db.scalars(q):
         scope = path_title(db, db.get(Node, i.node_id)) if i.node_id else "Global"
@@ -424,6 +528,74 @@ def post_insight_feedback(insight_id: int, body: InsightAction, db: Session = De
         raise HTTPException(404, "insight not found")
     insight_feedback(db, insight, body.action, body.note)
     return {"ok": True}
+
+
+# ---------- ask ----------
+
+ASK_HISTORY = 20  # earlier messages sent back to the model with each question
+
+
+def _sse(obj: dict) -> str:
+    return f"data: {json.dumps(obj)}\n\n"
+
+
+@app.get("/api/ask", response_model=list[AskMessageOut])
+def ask_history(db: Session = Depends(get_db)):
+    return [
+        AskMessageOut(id=m.id, role=m.role, content=m.content, tools_used=m.tools_used or [], created_at=m.created_at)
+        for m in db.scalars(select(AskMessage).order_by(AskMessage.id))
+    ]
+
+
+@app.delete("/api/ask")
+def clear_ask(db: Session = Depends(get_db)):
+    db.execute(delete(AskMessage))
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/ask")
+def ask_question(body: AskIn, db: Session = Depends(get_db)):
+    text = body.content.strip()
+    if not text:
+        raise HTTPException(400, "Empty question")
+    earlier = list(db.scalars(select(AskMessage).order_by(AskMessage.id.desc()).limit(ASK_HISTORY)))[::-1]
+    history = [{"role": m.role, "content": m.content} for m in earlier]
+    while history and history[0]["role"] != "user":
+        history.pop(0)
+    history.append({"role": "user", "content": text})
+    question = AskMessage(role="user", content=text, tools_used=[])
+    db.add(question)
+    db.commit()
+    question_id = question.id
+
+    def stream() -> Iterator[str]:
+        yield _sse({"type": "user_message", "id": question_id})
+        parts: list[str] = []
+        tools: list[str] = []
+        try:
+            for ev in ask.answer(history):
+                if ev["type"] == "delta":
+                    parts.append(ev["text"])
+                elif ev["type"] == "tool":
+                    tools.append(ev["label"])
+                yield _sse(ev)
+        except (LLMError, anthropic.AnthropicError) as e:
+            log.warning("ask failed: %s", e)
+            with SessionLocal() as wdb:  # keep history alternating: drop the unanswered question
+                q = wdb.get(AskMessage, question_id)
+                if q is not None:
+                    wdb.delete(q)
+                wdb.commit()
+            yield _sse({"type": "error", "message": _friendly_error(e)})
+            return
+        with SessionLocal() as wdb:
+            reply = AskMessage(role="assistant", content="".join(parts).strip(), tools_used=tools)
+            wdb.add(reply)
+            wdb.commit()
+            yield _sse({"type": "done", "id": reply.id})
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/health")

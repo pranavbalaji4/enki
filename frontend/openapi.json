@@ -27,44 +27,6 @@
     }
    }
   },
-  "/api/nodes": {
-   "post": {
-    "summary": "Create Node",
-    "operationId": "create_node_api_nodes_post",
-    "requestBody": {
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/NodeCreate"
-       }
-      }
-     },
-     "required": true
-    },
-    "responses": {
-     "200": {
-      "description": "Successful Response",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/NodeOut"
-        }
-       }
-      }
-     },
-     "422": {
-      "description": "Validation Error",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
   "/api/nodes/{node_id}": {
    "patch": {
     "summary": "Update Node",
@@ -149,18 +111,44 @@
     }
    }
   },
-  "/api/sessions/{session_id}": {
+  "/api/imports": {
+   "post": {
+    "summary": "Import Export",
+    "description": "Body: the claude.ai export ZIP (or conversations.json) as raw bytes.",
+    "operationId": "import_export_api_imports_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ImportOut"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/analysis/estimate": {
    "get": {
-    "summary": "Get Session",
-    "operationId": "get_session_api_sessions__session_id__get",
+    "summary": "Get Estimate",
+    "operationId": "get_estimate_api_analysis_estimate_get",
     "parameters": [
      {
-      "name": "session_id",
-      "in": "path",
-      "required": true,
+      "name": "limit",
+      "in": "query",
+      "required": false,
       "schema": {
-       "type": "integer",
-       "title": "Session Id"
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Limit"
       }
      }
     ],
@@ -170,7 +158,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/SessionOut"
+         "$ref": "#/components/schemas/Estimate"
         }
        }
       }
@@ -188,18 +176,177 @@
     }
    }
   },
-  "/api/sessions/{session_id}/messages": {
+  "/api/analysis": {
    "post": {
-    "summary": "Send Message",
-    "operationId": "send_message_api_sessions__session_id__messages_post",
+    "summary": "Start Analysis",
+    "operationId": "start_analysis_api_analysis_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StartAnalysis"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RunOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/analysis/latest": {
+   "get": {
+    "summary": "Latest Run",
+    "operationId": "latest_run_api_analysis_latest_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/RunOut"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "title": "Response Latest Run Api Analysis Latest Get"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/overview": {
+   "get": {
+    "summary": "Get Overview",
+    "operationId": "get_overview_api_overview_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/OverviewOut"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/topics/{topic_id}": {
+   "get": {
+    "summary": "Get Topic",
+    "operationId": "get_topic_api_topics__topic_id__get",
     "parameters": [
      {
-      "name": "session_id",
+      "name": "topic_id",
       "in": "path",
       "required": true,
       "schema": {
        "type": "integer",
-       "title": "Session Id"
+       "title": "Topic Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TopicDetailOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/chats/{chat_id}": {
+   "get": {
+    "summary": "Get Chat",
+    "operationId": "get_chat_api_chats__chat_id__get",
+    "parameters": [
+     {
+      "name": "chat_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "integer",
+       "title": "Chat Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChatOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "patch": {
+    "summary": "Update Chat",
+    "description": "Override the classifier: include a chat it skipped (it's analyzed on the next run), or leave one out.",
+    "operationId": "update_chat_api_chats__chat_id__patch",
+    "parameters": [
+     {
+      "name": "chat_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "integer",
+       "title": "Chat Id"
       }
      }
     ],
@@ -208,7 +355,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/SendMessage"
+        "$ref": "#/components/schemas/ChatUpdate"
        }
       }
      }
@@ -218,44 +365,9 @@
       "description": "Successful Response",
       "content": {
        "application/json": {
-        "schema": {}
-       }
-      }
-     },
-     "422": {
-      "description": "Validation Error",
-      "content": {
-       "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
+         "$ref": "#/components/schemas/ChatSummaryOut"
         }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/sessions/{session_id}/wrap-up": {
-   "post": {
-    "summary": "Wrap Up",
-    "operationId": "wrap_up_api_sessions__session_id__wrap_up_post",
-    "parameters": [
-     {
-      "name": "session_id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "integer",
-       "title": "Session Id"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "Successful Response",
-      "content": {
-       "application/json": {
-        "schema": {}
        }
       }
      },
@@ -379,6 +491,22 @@
        "default": "new",
        "title": "Status"
       }
+     },
+     {
+      "name": "kind",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Kind"
+      }
      }
     ],
     "responses": {
@@ -450,6 +578,76 @@
         "schema": {
          "$ref": "#/components/schemas/HTTPValidationError"
         }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/ask": {
+   "get": {
+    "summary": "Ask History",
+    "operationId": "ask_history_api_ask_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/AskMessageOut"
+         },
+         "type": "array",
+         "title": "Response Ask History Api Ask Get"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "summary": "Ask Question",
+    "operationId": "ask_question_api_ask_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AskIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "delete": {
+    "summary": "Clear Ask",
+    "operationId": "clear_ask_api_ask_delete",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
        }
       }
      }
@@ -634,6 +832,222 @@
     ],
     "title": "AnnotationOut"
    },
+   "AskIn": {
+    "properties": {
+     "content": {
+      "type": "string",
+      "title": "Content"
+     }
+    },
+    "type": "object",
+    "required": [
+     "content"
+    ],
+    "title": "AskIn"
+   },
+   "AskMessageOut": {
+    "properties": {
+     "id": {
+      "type": "integer",
+      "title": "Id"
+     },
+     "role": {
+      "type": "string",
+      "title": "Role"
+     },
+     "content": {
+      "type": "string",
+      "title": "Content"
+     },
+     "tools_used": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Tools Used"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "role",
+     "content",
+     "tools_used",
+     "created_at"
+    ],
+    "title": "AskMessageOut"
+   },
+   "ChatOut": {
+    "properties": {
+     "chat": {
+      "$ref": "#/components/schemas/ChatSummaryOut"
+     },
+     "breadcrumbs": {
+      "items": {
+       "$ref": "#/components/schemas/Crumb"
+      },
+      "type": "array",
+      "title": "Breadcrumbs"
+     },
+     "topic_label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Topic Label"
+     },
+     "summary": {
+      "type": "string",
+      "title": "Summary"
+     },
+     "claude_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Claude Url"
+     },
+     "messages": {
+      "items": {
+       "$ref": "#/components/schemas/MessageOut"
+      },
+      "type": "array",
+      "title": "Messages"
+     },
+     "annotations": {
+      "items": {
+       "$ref": "#/components/schemas/AnnotationOut"
+      },
+      "type": "array",
+      "title": "Annotations"
+     },
+     "episodes": {
+      "items": {
+       "$ref": "#/components/schemas/EpisodeOut"
+      },
+      "type": "array",
+      "title": "Episodes"
+     }
+    },
+    "type": "object",
+    "required": [
+     "chat",
+     "breadcrumbs",
+     "topic_label",
+     "summary",
+     "claude_url",
+     "messages",
+     "annotations",
+     "episodes"
+    ],
+    "title": "ChatOut"
+   },
+   "ChatSummaryOut": {
+    "properties": {
+     "id": {
+      "type": "integer",
+      "title": "Id"
+     },
+     "title": {
+      "type": "string",
+      "title": "Title"
+     },
+     "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Started At"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "is_learning": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Is Learning"
+     },
+     "judged_turns": {
+      "type": "integer",
+      "title": "Judged Turns"
+     },
+     "avg_understanding": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Avg Understanding"
+     },
+     "mix": {
+      "$ref": "#/components/schemas/Mix"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "title",
+     "started_at",
+     "status",
+     "is_learning",
+     "judged_turns",
+     "avg_understanding",
+     "mix"
+    ],
+    "title": "ChatSummaryOut"
+   },
+   "ChatUpdate": {
+    "properties": {
+     "is_learning": {
+      "type": "boolean",
+      "title": "Is Learning"
+     }
+    },
+    "type": "object",
+    "required": [
+     "is_learning"
+    ],
+    "title": "ChatUpdate"
+   },
+   "Crumb": {
+    "properties": {
+     "id": {
+      "type": "integer",
+      "title": "Id"
+     },
+     "title": {
+      "type": "string",
+      "title": "Title"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "title"
+    ],
+    "title": "Crumb"
+   },
    "EpisodeOut": {
     "properties": {
      "id": {
@@ -717,6 +1131,37 @@
     ],
     "title": "EpisodeOut"
    },
+   "Estimate": {
+    "properties": {
+     "chats": {
+      "type": "integer",
+      "title": "Chats"
+     },
+     "turns": {
+      "type": "integer",
+      "title": "Turns"
+     },
+     "usd": {
+      "type": "number",
+      "title": "Usd"
+     },
+     "breakdown": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "type": "object",
+      "title": "Breakdown"
+     }
+    },
+    "type": "object",
+    "required": [
+     "chats",
+     "turns",
+     "usd",
+     "breakdown"
+    ],
+    "title": "Estimate"
+   },
    "HTTPValidationError": {
     "properties": {
      "detail": {
@@ -729,6 +1174,43 @@
     },
     "type": "object",
     "title": "HTTPValidationError"
+   },
+   "ImportOut": {
+    "properties": {
+     "new": {
+      "type": "integer",
+      "title": "New"
+     },
+     "updated": {
+      "type": "integer",
+      "title": "Updated"
+     },
+     "unchanged": {
+      "type": "integer",
+      "title": "Unchanged"
+     },
+     "empty": {
+      "type": "integer",
+      "title": "Empty"
+     },
+     "pending_chats": {
+      "type": "integer",
+      "title": "Pending Chats"
+     },
+     "estimate": {
+      "$ref": "#/components/schemas/Estimate"
+     }
+    },
+    "type": "object",
+    "required": [
+     "new",
+     "updated",
+     "unchanged",
+     "empty",
+     "pending_chats",
+     "estimate"
+    ],
+    "title": "ImportOut"
    },
    "InsightAction": {
     "properties": {
@@ -870,38 +1352,28 @@
     ],
     "title": "MessageOut"
    },
-   "NodeCreate": {
+   "Mix": {
     "properties": {
-     "parent_id": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Parent Id"
+     "understood": {
+      "type": "integer",
+      "title": "Understood"
      },
-     "kind": {
-      "type": "string",
-      "enum": [
-       "folder",
-       "session"
-      ],
-      "title": "Kind"
+     "iffy": {
+      "type": "integer",
+      "title": "Iffy"
      },
-     "title": {
-      "type": "string",
-      "title": "Title"
+     "not_understood": {
+      "type": "integer",
+      "title": "Not Understood"
      }
     },
     "type": "object",
     "required": [
-     "kind",
-     "title"
+     "understood",
+     "iffy",
+     "not_understood"
     ],
-    "title": "NodeCreate"
+    "title": "Mix"
    },
    "NodeOut": {
     "properties": {
@@ -932,6 +1404,17 @@
       "type": "string",
       "title": "Status"
      },
+     "is_learning": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Is Learning"
+     },
      "created_at": {
       "type": "string",
       "format": "date-time",
@@ -945,6 +1428,7 @@
      "kind",
      "title",
      "status",
+     "is_learning",
      "created_at"
     ],
     "title": "NodeOut"
@@ -981,6 +1465,65 @@
     },
     "type": "object",
     "title": "NodeUpdate"
+   },
+   "OverviewOut": {
+    "properties": {
+     "snapshot": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SnapshotOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "stats": {
+      "$ref": "#/components/schemas/Stats"
+     },
+     "mix": {
+      "$ref": "#/components/schemas/Mix"
+     },
+     "topics": {
+      "items": {
+       "$ref": "#/components/schemas/TopicOut"
+      },
+      "type": "array",
+      "title": "Topics"
+     },
+     "global_patterns": {
+      "items": {
+       "$ref": "#/components/schemas/PatternOut"
+      },
+      "type": "array",
+      "title": "Global Patterns"
+     },
+     "top_patterns": {
+      "items": {
+       "$ref": "#/components/schemas/PatternOut"
+      },
+      "type": "array",
+      "title": "Top Patterns"
+     },
+     "stickies": {
+      "items": {
+       "$ref": "#/components/schemas/StickyOut"
+      },
+      "type": "array",
+      "title": "Stickies"
+     }
+    },
+    "type": "object",
+    "required": [
+     "snapshot",
+     "stats",
+     "mix",
+     "topics",
+     "global_patterns",
+     "top_patterns",
+     "stickies"
+    ],
+    "title": "OverviewOut"
    },
    "PatternOut": {
     "properties": {
@@ -1026,6 +1569,28 @@
      "source": {
       "type": "string",
       "title": "Source"
+     },
+     "scope_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scope Id"
+     },
+     "scope": {
+      "type": "string",
+      "title": "Scope"
+     },
+     "topics": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Topics"
      }
     },
     "type": "object",
@@ -1038,7 +1603,10 @@
      "evidence_count",
      "user_status",
      "user_note",
-     "source"
+     "source",
+     "scope_id",
+     "scope",
+     "topics"
     ],
     "title": "PatternOut"
    },
@@ -1119,10 +1687,6 @@
       },
       "type": "array",
       "title": "Stickies"
-     },
-     "tutor_sees": {
-      "type": "string",
-      "title": "Tutor Sees"
      }
     },
     "type": "object",
@@ -1132,82 +1696,161 @@
      "summary",
      "markdown",
      "patterns",
-     "stickies",
-     "tutor_sees"
+     "stickies"
     ],
     "title": "ProfileOut"
    },
-   "SendMessage": {
+   "RunOut": {
     "properties": {
-     "content": {
-      "type": "string",
-      "title": "Content"
-     }
-    },
-    "type": "object",
-    "required": [
-     "content"
-    ],
-    "title": "SendMessage"
-   },
-   "SessionOut": {
-    "properties": {
-     "node": {
-      "$ref": "#/components/schemas/NodeOut"
-     },
-     "path": {
-      "type": "string",
-      "title": "Path"
-     },
-     "summary": {
-      "type": "string",
-      "title": "Summary"
-     },
-     "messages": {
-      "items": {
-       "$ref": "#/components/schemas/MessageOut"
-      },
-      "type": "array",
-      "title": "Messages"
-     },
-     "annotations": {
-      "items": {
-       "$ref": "#/components/schemas/AnnotationOut"
-      },
-      "type": "array",
-      "title": "Annotations"
-     },
-     "episodes": {
-      "items": {
-       "$ref": "#/components/schemas/EpisodeOut"
-      },
-      "type": "array",
-      "title": "Episodes"
-     },
-     "pending_jobs": {
+     "id": {
       "type": "integer",
-      "title": "Pending Jobs"
+      "title": "Id"
      },
-     "failed_jobs": {
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "stage": {
+      "type": "string",
+      "title": "Stage"
+     },
+     "stage_done": {
+      "type": "integer",
+      "title": "Stage Done"
+     },
+     "stage_total": {
+      "type": "integer",
+      "title": "Stage Total"
+     },
+     "chats": {
+      "type": "integer",
+      "title": "Chats"
+     },
+     "counts": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "type": "object",
+      "title": "Counts"
+     },
+     "errors": {
       "items": {
        "type": "string"
       },
       "type": "array",
-      "title": "Failed Jobs"
+      "title": "Errors"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
      }
     },
     "type": "object",
     "required": [
-     "node",
-     "path",
-     "summary",
-     "messages",
-     "annotations",
-     "episodes",
-     "pending_jobs",
-     "failed_jobs"
+     "id",
+     "status",
+     "stage",
+     "stage_done",
+     "stage_total",
+     "chats",
+     "counts",
+     "errors",
+     "error",
+     "created_at",
+     "updated_at"
     ],
-    "title": "SessionOut"
+    "title": "RunOut"
+   },
+   "SnapshotOut": {
+    "properties": {
+     "headline": {
+      "type": "string",
+      "title": "Headline"
+     },
+     "summary_md": {
+      "type": "string",
+      "title": "Summary Md"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "headline",
+     "summary_md",
+     "created_at"
+    ],
+    "title": "SnapshotOut"
+   },
+   "StartAnalysis": {
+    "properties": {
+     "limit": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit"
+     }
+    },
+    "type": "object",
+    "title": "StartAnalysis"
+   },
+   "Stats": {
+    "properties": {
+     "chats": {
+      "type": "integer",
+      "title": "Chats"
+     },
+     "learning_chats": {
+      "type": "integer",
+      "title": "Learning Chats"
+     },
+     "analyzed_chats": {
+      "type": "integer",
+      "title": "Analyzed Chats"
+     },
+     "pending_chats": {
+      "type": "integer",
+      "title": "Pending Chats"
+     },
+     "topics": {
+      "type": "integer",
+      "title": "Topics"
+     }
+    },
+    "type": "object",
+    "required": [
+     "chats",
+     "learning_chats",
+     "analyzed_chats",
+     "pending_chats",
+     "topics"
+    ],
+    "title": "Stats"
    },
    "StickyOut": {
     "properties": {
@@ -1218,6 +1861,10 @@
      "session_id": {
       "type": "integer",
       "title": "Session Id"
+     },
+     "chat_title": {
+      "type": "string",
+      "title": "Chat Title"
      },
      "concept": {
       "type": "string",
@@ -1236,11 +1883,140 @@
     "required": [
      "id",
      "session_id",
+     "chat_title",
      "concept",
      "excerpt",
      "why"
     ],
     "title": "StickyOut"
+   },
+   "TopicDetailOut": {
+    "properties": {
+     "topic": {
+      "$ref": "#/components/schemas/TopicOut"
+     },
+     "summary": {
+      "type": "string",
+      "title": "Summary"
+     },
+     "breadcrumbs": {
+      "items": {
+       "$ref": "#/components/schemas/Crumb"
+      },
+      "type": "array",
+      "title": "Breadcrumbs"
+     },
+     "children": {
+      "items": {
+       "$ref": "#/components/schemas/TopicOut"
+      },
+      "type": "array",
+      "title": "Children"
+     },
+     "patterns": {
+      "items": {
+       "$ref": "#/components/schemas/PatternOut"
+      },
+      "type": "array",
+      "title": "Patterns"
+     },
+     "stickies": {
+      "items": {
+       "$ref": "#/components/schemas/StickyOut"
+      },
+      "type": "array",
+      "title": "Stickies"
+     },
+     "chats": {
+      "items": {
+       "$ref": "#/components/schemas/ChatSummaryOut"
+      },
+      "type": "array",
+      "title": "Chats"
+     }
+    },
+    "type": "object",
+    "required": [
+     "topic",
+     "summary",
+     "breadcrumbs",
+     "children",
+     "patterns",
+     "stickies",
+     "chats"
+    ],
+    "title": "TopicDetailOut"
+   },
+   "TopicOut": {
+    "properties": {
+     "id": {
+      "type": "integer",
+      "title": "Id"
+     },
+     "parent_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Parent Id"
+     },
+     "title": {
+      "type": "string",
+      "title": "Title"
+     },
+     "path": {
+      "type": "string",
+      "title": "Path"
+     },
+     "chat_count": {
+      "type": "integer",
+      "title": "Chat Count"
+     },
+     "analyzed_count": {
+      "type": "integer",
+      "title": "Analyzed Count"
+     },
+     "judged_turns": {
+      "type": "integer",
+      "title": "Judged Turns"
+     },
+     "avg_understanding": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Avg Understanding"
+     },
+     "mix": {
+      "$ref": "#/components/schemas/Mix"
+     },
+     "line": {
+      "type": "string",
+      "title": "Line"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "parent_id",
+     "title",
+     "path",
+     "chat_count",
+     "analyzed_count",
+     "judged_turns",
+     "avg_understanding",
+     "mix",
+     "line"
+    ],
+    "title": "TopicOut"
    },
    "ValidationError": {
     "properties": {

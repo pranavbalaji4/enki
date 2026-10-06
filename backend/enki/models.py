@@ -11,7 +11,7 @@ def _now() -> datetime:
 
 
 class Node(Base):
-    """Workspace tree. `folder` nodes nest freely; `session` nodes are chats and always leaves.
+    """Topic tree. `folder` nodes are topics (Domain -> Topic); `session` nodes are imported chats and always leaves.
     The implicit global root is parent_id = NULL (patterns with scope_node_id = NULL are global)."""
 
     __tablename__ = "nodes"
@@ -20,10 +20,19 @@ class Node(Base):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
     kind: Mapped[str] = mapped_column(String(16))  # folder | session
     title: Mapped[str] = mapped_column(String(200))
-    # Session: rolling summary of the chat. Folder: roll-up of what was covered and what clicked.
+    # Session: summary of the chat. Folder: roll-up of what was covered and what clicked.
     summary: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String(16), default="active")  # session: active | reviewing | reviewed
+    # Session: pending (imported, not analyzed yet) | analyzed | skipped (not a learning chat) | failed
+    status: Mapped[str] = mapped_column(String(16), default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Imported chats
+    source: Mapped[str | None] = mapped_column(String(16))  # claude_ai
+    external_id: Mapped[str | None] = mapped_column(String(64), unique=True)
+    source_updated_at: Mapped[str | None] = mapped_column(String(40))  # change detection on re-import
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Classifier output; is_learning=None means not classified yet. The user can flip is_learning.
+    is_learning: Mapped[bool | None] = mapped_column(Boolean)
+    topic_label: Mapped[str | None] = mapped_column(String(200))
 
 
 class Message(Base):
@@ -34,6 +43,7 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String(16))  # user | assistant
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    external_id: Mapped[str | None] = mapped_column(String(64))
 
 
 class TurnAnnotation(Base):
@@ -112,7 +122,9 @@ class Pattern(Base):
     status: Mapped[str] = mapped_column(String(16), default="active")  # active | rejected
     user_status: Mapped[str] = mapped_column(String(16), default="unreviewed")  # unreviewed | confirmed | rejected | edited
     user_note: Mapped[str] = mapped_column(Text, default="")
-    source: Mapped[str] = mapped_column(String(16), default="observed")  # observed | user
+    source: Mapped[str] = mapped_column(String(16), default="observed")  # observed | user | rollup
+    # Global roll-ups: the topic-level patterns this one was built from.
+    derived_from: Mapped[list | None] = mapped_column(JSON)
     surfaced: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -166,3 +178,46 @@ class Job(Base):
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class AnalysisRun(Base):
+    """One pass of the analysis pipeline over the pending imported chats."""
+
+    __tablename__ = "analysis_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued | running | done | failed
+    # classify | topics | turns | review | profile | done
+    stage: Mapped[str] = mapped_column(String(16), default="classify")
+    stage_done: Mapped[int] = mapped_column(Integer, default=0)
+    stage_total: Mapped[int] = mapped_column(Integer, default=0)
+    chat_ids: Mapped[list] = mapped_column(JSON, default=list)
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)  # learning / skipped / turns / reviewed / failed
+    errors: Mapped[list] = mapped_column(JSON, default=list)  # first few per-item failures
+    error: Mapped[str | None] = mapped_column(Text)  # what stopped the whole run
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class ProfileSnapshot(Base):
+    """The written global profile, regenerated at the end of each analysis run."""
+
+    __tablename__ = "profile_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    headline: Mapped[str] = mapped_column(Text)
+    summary_md: Mapped[str] = mapped_column(Text)
+    topic_lines: Mapped[dict] = mapped_column(JSON, default=dict)  # str(topic node id) -> one line
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AskMessage(Base):
+    """History of the "ask about how I learn" chat."""
+
+    __tablename__ = "ask_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    role: Mapped[str] = mapped_column(String(16))  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+    tools_used: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

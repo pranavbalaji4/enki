@@ -1,41 +1,23 @@
 @import "tailwindcss";
 
+/* Lapis night. One palette, dark only. The understanding scale (good / mid / bad) is the only loud color. */
 :root {
-  --paper: #f7f4ee;
-  --panel: #fffdf9;
-  --sunken: #efebe3;
-  --ink: #23201b;
-  --ink-soft: #6b645a;
-  --ink-faint: #9c9488;
-  --line: #e3ddd2;
-  --accent: #1f6f68;
-  --accent-soft: #dcece9;
-  --good: #2f7d4f;
-  --good-soft: #e1f0e6;
-  --mid: #a86a12;
-  --mid-soft: #f6ead6;
-  --bad: #b2453e;
-  --bad-soft: #f6e0dd;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #171614;
-    --panel: #1f1d1a;
-    --sunken: #141311;
-    --ink: #ece7de;
-    --ink-soft: #a9a195;
-    --ink-faint: #756e64;
-    --line: #34302b;
-    --accent: #6cc3b9;
-    --accent-soft: #1d3432;
-    --good: #7cc795;
-    --good-soft: #1c2f23;
-    --mid: #e0a95a;
-    --mid-soft: #33291a;
-    --bad: #e58b83;
-    --bad-soft: #3a211f;
-  }
+  color-scheme: dark;
+  --paper: #0d1524;   /* abyss: page */
+  --panel: #141e33;   /* basin: raised surfaces */
+  --sunken: #0a101c;  /* silt: wells, inputs, code */
+  --ink: #ece6d6;     /* parchment */
+  --ink-soft: #a7aec0;
+  --ink-faint: #6f7a93;
+  --line: #26324a;
+  --accent: #9db2f4;  /* pale lapis: links, focus, primary actions */
+  --accent-soft: #1f2c4d;
+  --good: #5cc6a7;    /* understood */
+  --good-soft: #15302d;
+  --mid: #e3b35e;     /* iffy */
+  --mid-soft: #33291a;
+  --bad: #e8807c;     /* not understood */
+  --bad-soft: #3a2124;
 }
 
 @theme inline {
@@ -54,9 +36,8 @@
   --color-mid-soft: var(--mid-soft);
   --color-bad: var(--bad);
   --color-bad-soft: var(--bad-soft);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-serif: var(--font-newsreader);
+  --font-sans: var(--font-figtree);
+  --font-serif: var(--font-literata);
 }
 
 body {
@@ -64,25 +45,57 @@ body {
   color: var(--ink);
 }
 
-/* Prose for tutor replies and markdown views */
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+* {
+  scrollbar-color: var(--line) transparent;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Long-form text: Claude's replies, the written profile, Ask answers. */
 .prose-enki {
-  font-family: var(--font-newsreader), Georgia, serif;
-  font-size: 1.075rem;
-  line-height: 1.65;
+  font-family: var(--font-literata), Georgia, serif;
+  font-size: 1.02rem;
+  line-height: 1.7;
 }
 .prose-enki p { margin: 0.6em 0; }
-.prose-enki h1 { font-size: 1.5rem; font-weight: 600; margin: 0.4em 0 0.6em; }
-.prose-enki h2 { font-size: 1.2rem; font-weight: 600; margin: 1.2em 0 0.4em; }
-.prose-enki h3 { font-size: 1.05rem; font-weight: 600; margin: 1em 0 0.3em; }
+.prose-enki h1 { font-size: 1.4rem; font-weight: 600; margin: 0.4em 0 0.6em; }
+.prose-enki h2 { font-size: 1.18rem; font-weight: 600; margin: 1.2em 0 0.4em; }
+.prose-enki h3 { font-size: 1.04rem; font-weight: 600; margin: 1em 0 0.3em; }
 .prose-enki ul { list-style: disc; padding-left: 1.3em; margin: 0.5em 0; }
 .prose-enki ol { list-style: decimal; padding-left: 1.3em; margin: 0.5em 0; }
-.prose-enki li { margin: 0.2em 0; }
+.prose-enki li { margin: 0.25em 0; }
+.prose-enki li::marker { color: var(--ink-faint); }
 .prose-enki strong { font-weight: 600; }
 .prose-enki em { font-style: italic; }
-.prose-enki a { color: var(--accent); text-decoration: underline; }
-.prose-enki blockquote { border-left: 3px solid var(--accent); padding-left: 0.9em; color: var(--ink-soft); margin: 0.6em 0; }
-.prose-enki code { font-family: var(--font-geist-mono), monospace; font-size: 0.85em; background: var(--sunken); padding: 0.1em 0.35em; border-radius: 4px; }
+.prose-enki a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.prose-enki blockquote { border-left: 2px solid var(--accent); padding-left: 0.9em; color: var(--ink-soft); margin: 0.6em 0; }
+.prose-enki code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.84em; background: var(--sunken); padding: 0.1em 0.35em; border-radius: 4px; }
 .prose-enki pre { background: var(--sunken); border: 1px solid var(--line); padding: 0.8em 1em; border-radius: 8px; overflow-x: auto; margin: 0.7em 0; line-height: 1.45; }
-.prose-enki pre code { background: none; padding: 0; font-size: 0.82rem; }
+.prose-enki pre code { background: none; padding: 0; font-size: 0.8rem; }
 .prose-enki table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.95em; display: block; overflow-x: auto; }
 .prose-enki th, .prose-enki td { border: 1px solid var(--line); padding: 0.3em 0.6em; }
+
+/* The one orchestrated moment: the profile headline settles in on first load. */
+@keyframes settle {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.settle { animation: settle 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .settle { animation: none; }
+  * { transition: none !important; }
+}

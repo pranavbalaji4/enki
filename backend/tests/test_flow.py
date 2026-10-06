@@ -1,7 +1,11 @@
-"""End-to-end loop with the offline FakeLLM: chat -> tag/evaluate -> wrap-up review -> patterns -> insights -> feedback."""
+"""End-to-end with the offline FakeLLM: import a claude.ai export -> analyze -> topics, judged turns, patterns, profile."""
 
+import copy
+import io
 import json
 import os
+import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +17,8 @@ from enki import db as enki_db  # noqa: E402
 from enki.api import app  # noqa: E402
 from enki.jobs import run_pending  # noqa: E402
 
+FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "conversations.json").read_text(encoding="utf-8"))
+
 
 @pytest.fixture()
 def client(tmp_path):
@@ -21,133 +27,199 @@ def client(tmp_path):
     return TestClient(app)  # no `with`: the lifespan worker stays off; tests drain jobs via run_pending()
 
 
-def chat(client, session_id: int, text: str) -> dict:
+def export_zip(conversations=FIXTURE) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("data-2026-10-05/conversations.json", json.dumps(conversations))
+        z.writestr("data-2026-10-05/users.json", "[]")
+    return buf.getvalue()
+
+
+def upload(client, blob: bytes) -> dict:
+    r = client.post("/api/imports", content=blob, headers={"Content-Type": "application/zip"})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def analyze(client, limit=None) -> dict:
+    r = client.post("/api/analysis", json={"limit": limit})
+    assert r.status_code == 200, r.text
+    run_pending()
+    return client.get("/api/analysis/latest").json()
+
+
+def chat_id(client, title: str) -> int:
+    return next(n["id"] for n in client.get("/api/tree").json() if n["kind"] == "session" and n["title"] == title)
+
+
+def test_import_is_idempotent_and_estimates(client):
+    r = upload(client, export_zip())
+    assert (r["new"], r["updated"], r["unchanged"], r["empty"]) == (4, 0, 0, 1)
+    assert r["pending_chats"] == 4
+    assert r["estimate"]["chats"] == 4 and r["estimate"]["turns"] == 8 and r["estimate"]["usd"] > 0
+
+    r = upload(client, export_zip())
+    assert (r["new"], r["unchanged"]) == (0, 4)
+
+    # A bare conversations.json works too; junk doesn't.
+    assert upload(client, json.dumps(FIXTURE).encode())["unchanged"] == 4
+    assert client.post("/api/imports", content=b"PK\x03\x04nope").status_code == 400
+
+
+def test_parsing_keeps_main_branch_and_flattens_content(client):
+    upload(client, export_zip())
+    stacks = client.get(f"/api/chats/{chat_id(client, 'Stacks')}").json()
+    texts = [m["content"] for m in stacks["messages"]]
+    assert len(texts) == 4 and not any("ABANDONED" in t for t in texts)
+    assert stacks["claude_url"] == "https://claude.ai/chat/c-stacks"
+
+    queues = client.get(f"/api/chats/{chat_id(client, 'Queues')}").json()
+    assert queues["messages"][1]["content"] == "Formally, a queue is a first-in-first-out collection."  # thinking dropped
+    assert queues["messages"][2]["content"] == "I don't get it"  # `text` used when content is empty
+    assert "[attachment: notes.txt]" in queues["messages"][4]["content"]
+
+
+def test_full_analysis(client):
+    upload(client, export_zip())
+    run = analyze(client)
+    assert run["status"] == "done", run
+    assert run["counts"]["learning"] == 3 and run["counts"]["skipped"] == 1 and run["counts"]["reviewed"] == 3
+    assert run["errors"] == []
+
+    tree = client.get("/api/tree").json()
+    folders = {n["id"]: n for n in tree if n["kind"] == "folder"}
+    paths = set()
+    for f in folders.values():
+        if f["parent_id"]:
+            paths.add(f"{folders[f['parent_id']]['title']} / {f['title']}")
+    assert paths == {"Computer Science / Data Structures", "Finance / Markets"}
+    email = next(n for n in tree if n["title"] == "Email to landlord")
+    assert email["status"] == "skipped" and email["parent_id"] is None
+
+    q = client.get(f"/api/chats/{chat_id(client, 'Queues')}").json()
+    assert [c["title"] for c in q["breadcrumbs"]] == ["Computer Science", "Data Structures"]
+    replies = [m for m in q["messages"] if m["role"] == "assistant"]
+    anns = {a["message_id"]: a for a in q["annotations"]}
+    assert len(anns) == len(replies) == 3
+    first, second, last = (anns[m["id"]] for m in replies)
+    assert first["verdict"] == "confusion" and first["level_probs"].index(max(first["level_probs"])) == 0
+    assert second["verdict"] == "paraphrase_correct" and "analogy" in second["strategies"]
+    assert abs(sum(second["level_probs"]) - 1) < 1e-6
+    assert last["verdict"] == "no_signal" and last["level_probs"] is None
+    assert q["chat"]["status"] == "analyzed" and q["chat"]["judged_turns"] == 2
+    (ep,) = q["episodes"]
+    assert ep["outcome"] == "clicked" and ep["winning_message_id"] == replies[1]["id"]
+
+    o = client.get("/api/overview").json()
+    assert o["stats"]["analyzed_chats"] == 3 and o["stats"]["pending_chats"] == 0
+    assert o["mix"] == {"understood": 3, "iffy": 0, "not_understood": 1}
+    assert o["snapshot"] and o["snapshot"]["headline"]
+    # The analogy pattern held in two topics, so it rolled up to a global pattern backed by both.
+    (g,) = o["global_patterns"]
+    assert g["source"] == "rollup" and g["evidence_count"] == 3
+    assert sorted(g["topics"]) == ["Computer Science / Data Structures", "Finance / Markets"]
+    ds = next(t for t in o["topics"] if t["title"] == "Data Structures")
+    assert ds["chat_count"] == 2 and ds["judged_turns"] == 3 and ds["line"]
+
+    topic = client.get(f"/api/topics/{ds['id']}").json()
+    assert {c["title"] for c in topic["chats"]} == {"Queues", "Stacks"}
+    assert topic["patterns"][0]["strategy"] == "analogy" and topic["summary"]
+    domain = client.get(f"/api/topics/{ds['parent_id']}").json()
+    assert [c["title"] for c in domain["children"]] == ["Data Structures"]
+
+
+def test_global_insight_card_and_confirmation(client):
+    upload(client, export_zip())
+    analyze(client)
+    cards = [i for i in client.get("/api/insights?kind=pattern").json() if i["scope"] == "Global"]
+    assert len(cards) == 1 and "2 topics" in cards[0]["body"]
+    client.post(f"/api/insights/{cards[0]['id']}/feedback", json={"action": "confirm"})
+
+    # Re-deriving the roll-up (on the next run) keeps the confirmation's weight.
+    from enki.analysis import rollup_global_patterns
+
+    with enki_db.SessionLocal() as db:
+        (g,) = rollup_global_patterns(db)
+        db.commit()
+        assert g.user_status == "confirmed" and g.evidence_count == 5
+
+
+def test_changed_chat_is_reanalyzed_without_double_counting(client):
+    upload(client, export_zip())
+    analyze(client)
+    convs = copy.deepcopy(FIXTURE)
+    queues = convs[0]
+    queues["updated_at"] = "2026-09-20T10:00:00Z"
+    queues["chat_messages"] += [
+        {"uuid": "q7", "sender": "human", "created_at": "2026-09-20T10:00:00Z", "content": [{"type": "text", "text": "What about a priority queue?"}]},
+        {"uuid": "q8", "sender": "assistant", "created_at": "2026-09-20T10:00:05Z", "content": [{"type": "text", "text": "Like an ER: most urgent first."}]},
+    ]
+    r = upload(client, export_zip(convs))
+    assert (r["updated"], r["unchanged"], r["pending_chats"]) == (1, 3, 1)
+    assert r["estimate"]["chats"] == 1
+
+    run = analyze(client)
+    assert run["status"] == "done" and run["chats"] == 1
+    o = client.get("/api/overview").json()
+    assert o["global_patterns"][0]["evidence_count"] == 3  # the old review's evidence was taken back out
+    q = client.get(f"/api/chats/{chat_id(client, 'Queues')}").json()
+    assert len(q["messages"]) == 8 and q["chat"]["status"] == "analyzed"
+
+
+def test_limit_and_learning_override(client):
+    upload(client, export_zip())
+    assert client.get("/api/analysis/estimate?limit=1").json()["chats"] == 1
+    run = analyze(client, limit=1)
+    assert run["chats"] == 1  # the most recent pending chat: the email
+    email = chat_id(client, "Email to landlord")
+    assert client.get(f"/api/chats/{email}").json()["chat"]["status"] == "skipped"
+
+    r = client.patch(f"/api/chats/{email}", json={"is_learning": True}).json()
+    assert r["status"] == "pending" and r["is_learning"] is True
+    assert client.get("/api/analysis/estimate").json()["chats"] == 4
+
+
+def test_nothing_to_analyze(client):
+    assert client.post("/api/analysis", json={}).status_code == 400
+
+
+def test_ask_streams_and_keeps_history(client):
+    upload(client, export_zip())
+    analyze(client)
     events = []
-    with client.stream("POST", f"/api/sessions/{session_id}/messages", json={"content": text}) as r:
+    with client.stream("POST", "/api/ask", json={"content": "How do I learn best?"}) as r:
         assert r.status_code == 200
         for line in r.iter_lines():
             if line.startswith("data: "):
                 events.append(json.loads(line[6:]))
-    assert events[-1]["type"] == "done", events[-1]
-    return {"reply": "".join(e["text"] for e in events if e["type"] == "delta"), "id": events[-1]["id"]}
+    kinds = [e["type"] for e in events]
+    assert kinds[0] == "user_message" and "tool" in kinds and kinds[-1] == "done"
+    answer = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert "3 replies landed" in answer and "(/chats/" in answer
+
+    hist = client.get("/api/ask").json()
+    assert [m["role"] for m in hist] == ["user", "assistant"] and hist[1]["tools_used"]
+    client.delete("/api/ask")
+    assert client.get("/api/ask").json() == []
 
 
-def make_session(client, topic_title="Data Structures", lecture="Lec 7: Queues"):
-    domain = client.post("/api/nodes", json={"kind": "folder", "title": "CS"}).json()
-    topic = client.post("/api/nodes", json={"kind": "folder", "title": topic_title, "parent_id": domain["id"]}).json()
-    sess = client.post("/api/nodes", json={"kind": "session", "title": lecture, "parent_id": topic["id"]}).json()
-    return domain, topic, sess
+def test_ask_tools_validate_input(client):
+    from enki.ask import run_tool
 
-
-def test_full_learning_loop(client):
-    domain, topic, sess = make_session(client)
-
-    chat(client, sess["id"], "What is a queue?")
-    chat(client, sess["id"], "I don't get it")
-    chat(client, sess["id"], "Oh so the first one in leaves first?")
-    run_pending()
-
-    s = client.get(f"/api/sessions/{sess['id']}").json()
-    assert s["path"] == "CS / Data Structures / Lec 7: Queues"
-    assert len(s["messages"]) == 6
-    anns = {a["message_id"]: a for a in s["annotations"]}
-    replies = [m for m in s["messages"] if m["role"] == "assistant"]
-    assert "analogy" in anns[replies[0]["id"]]["strategies"]
-    assert anns[replies[0]["id"]]["verdict"] == "confusion"
-    assert anns[replies[1]["id"]]["verdict"] == "paraphrase_correct"
-    assert anns[replies[2]["id"]]["verdict"] is None  # no learner reply yet
-
-    assert client.post(f"/api/sessions/{sess['id']}/wrap-up").json()["ok"]
-    run_pending()
-
-    s = client.get(f"/api/sessions/{sess['id']}").json()
-    assert s["node"]["status"] == "reviewed"
-    assert s["pending_jobs"] == 0 and s["failed_jobs"] == []
-    (ep,) = s["episodes"]
-    assert ep["outcome"] == "clicked" and ep["winning_message_id"] == replies[1]["id"]
-
-    prof = client.get(f"/api/profile/{topic['id']}").json()
-    (pat,) = prof["patterns"]
-    assert pat["strategy"] == "analogy" and pat["evidence_count"] == 1
-    assert prof["stickies"] and "coffee shop" in prof["stickies"][0]["excerpt"]
-    assert "analogies" in prof["markdown"].lower()
-    assert "Everyday analogies" in prof["tutor_sees"]
-
-    # The next session in the same topic sees the pattern, the topic summary and the sticky explanation.
-    sess2 = client.post("/api/nodes", json={"kind": "session", "title": "Lec 8", "parent_id": topic["id"]}).json()
-    from enki.context import build_tutor_request
-    from enki.models import Node
-
-    with enki_db.SessionLocal() as db:
-        system, _ = build_tutor_request(db, db.get(Node, sess2["id"]))
-    assert "Everyday analogies" in system and "coffee shop" in system and "Data Structures:" in system
-
-    # A sibling domain does not see Data Structures' patterns.
-    other = client.post("/api/nodes", json={"kind": "folder", "title": "Biology"}).json()
-    bio = client.post("/api/nodes", json={"kind": "session", "title": "Cells", "parent_id": other["id"]}).json()
-    with enki_db.SessionLocal() as db:
-        system, _ = build_tutor_request(db, db.get(Node, bio["id"]))
-    assert "Everyday analogies" not in system
-
-    recaps = [i for i in client.get("/api/insights").json() if i["kind"] == "recap"]
-    assert len(recaps) == 1 and recaps[0]["scope"] == "CS / Data Structures"
-
-
-def test_pattern_insight_surfaces_and_feedback(client):
-    _, topic, _ = make_session(client)
-    for i in range(3):
-        s = client.post("/api/nodes", json={"kind": "session", "title": f"L{i}", "parent_id": topic["id"]}).json()
-        chat(client, s["id"], "What is a stack?")
-        chat(client, s["id"], "So the last one in comes out first?")
-        client.post(f"/api/sessions/{s['id']}/wrap-up")
-        run_pending()
-
-    cards = [i for i in client.get("/api/insights").json() if i["kind"] == "pattern"]
-    assert len(cards) == 1
-    card = cards[0]
-    assert len(card["evidence"]) == 3 and "3 of 3" in card["body"]
-
-    client.post(f"/api/insights/{card['id']}/feedback", json={"action": "confirm", "note": "especially for data structures"})
-    prof = client.get(f"/api/profile/{topic['id']}").json()
-    (pat,) = prof["patterns"]
-    assert pat["user_status"] == "confirmed" and "especially" in pat["user_note"]
-    assert "stated/confirmed by the learner" in prof["tutor_sees"]
-
-
-def test_rewrap_does_not_double_count(client):
-    _, topic, sess = make_session(client)
-    chat(client, sess["id"], "What is a queue?")
-    chat(client, sess["id"], "So first in first out?")
-    for _ in range(2):
-        client.post(f"/api/sessions/{sess['id']}/wrap-up")
-        run_pending()
-    (pat,) = client.get(f"/api/profile/{topic['id']}").json()["patterns"]
-    assert pat["evidence_count"] == 1
-    assert len([i for i in client.get("/api/insights").json() if i["kind"] == "recap"]) == 1
-
-
-def test_rejected_pattern_leaves_tutor_prompt(client):
-    _, topic, sess = make_session(client)
-    chat(client, sess["id"], "What is a queue?")
-    chat(client, sess["id"], "So first in first out?")
-    client.post(f"/api/sessions/{sess['id']}/wrap-up")
-    run_pending()
-    from enki.models import Insight, Pattern
-
-    with enki_db.SessionLocal() as db:
-        p = db.query(Pattern).one()
-        db.add(Insight(node_id=topic["id"], pattern_id=p.id, kind="pattern", title=p.claim, body=""))
-        db.commit()
-    card = next(i for i in client.get("/api/insights").json() if i["kind"] == "pattern")
-    client.post(f"/api/insights/{card['id']}/feedback", json={"action": "reject"})
-    prof = client.get(f"/api/profile/{topic['id']}").json()
-    assert prof["patterns"] == [] and prof["tutor_sees"] == ""
+    upload(client, export_zip())
+    analyze(client)
+    out, err = run_tool("search_turns", {"level": "not_understood"})
+    assert not err and json.loads(out)[0]["verdict"] == "confusion"
+    assert run_tool("get_topic", {"topic_id": "x"})[1] is True
+    assert run_tool("get_chat", {"chat_id": 99999})[1] is True
+    assert run_tool("nope", {})[1] is True
 
 
 def test_tree_operations(client):
-    domain, topic, sess = make_session(client)
-    r = client.patch(f"/api/nodes/{domain['id']}", json={"move": True, "parent_id": topic["id"]})
-    assert r.status_code == 400
-    assert client.post("/api/nodes", json={"kind": "session", "title": "x", "parent_id": sess["id"]}).status_code == 404
-    client.delete(f"/api/nodes/{domain['id']}")
-    assert client.get("/api/tree").json() == []
+    upload(client, export_zip())
+    analyze(client)
+    tree = client.get("/api/tree").json()
+    domain = next(n for n in tree if n["kind"] == "folder" and n["parent_id"] is None)
+    topic = next(n for n in tree if n["parent_id"] == domain["id"])
+    assert client.patch(f"/api/nodes/{domain['id']}", json={"move": True, "parent_id": topic["id"]}).status_code == 400
+    assert client.patch(f"/api/nodes/{topic['id']}", json={"title": "DS"}).json()["title"] == "DS"

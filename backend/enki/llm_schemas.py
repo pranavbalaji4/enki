@@ -17,10 +17,54 @@ class TagResult(BaseModel):
 
 class EvalResult(BaseModel):
     verdict: Verdict
+    level_probs: list[float] = Field(
+        description="Exactly three probabilities summing to 1: [not understood, iffy, understood]"
+    )
     understanding: float = Field(description="0.0 = not understood at all, 1.0 = clearly understood")
     confidence: float = Field(description="0.0-1.0: how sure you are, given only the learner's next message")
     referenced_part: str = Field(description="Short quote of the part of the tutor reply the learner picked up on, or empty")
     reasoning: str = Field(description="One sentence")
+
+
+class TurnAnalysis(BaseModel):
+    """Tagging and the understanding judgement in one call (the Claude evaluator path)."""
+
+    tag: TagResult
+    evaluation: EvalResult
+
+
+class ChatClassification(BaseModel):
+    is_learning: bool = Field(
+        description="True if the user was trying to understand something (a concept, how something works, why). "
+        "False for pure tasks: writing/editing text, generating content, quick lookups, debugging with no learning"
+    )
+    domain: str = Field(description="Broad subject, Title Case, e.g. 'Computer Science', 'Finance', 'Philosophy'")
+    topic: str = Field(description="Specific topic within the domain, Title Case, 1-4 words, e.g. 'Data Structures'")
+
+
+class TopicLeaf(BaseModel):
+    name: str = Field(description="Topic name, Title Case, 1-4 words")
+    label_ids: list[int] = Field(description="Ids of every input label that belongs under this topic")
+
+
+class TopicDomain(BaseModel):
+    name: str = Field(description="Domain name, Title Case, e.g. 'Computer Science'")
+    topics: list[TopicLeaf]
+
+
+class TopicTree(BaseModel):
+    domains: list[TopicDomain]
+
+
+class CrossTopicLine(BaseModel):
+    topic_id: int
+    line: str = Field(description="One sentence, second person: how you learn in this topic")
+
+
+class GlobalProfile(BaseModel):
+    headline: str = Field(description="One or two sentences, second person: the single most useful thing about how you learn")
+    summary_md: str = Field(description="Markdown, second person, <= 220 words: how you learn across topics, with the evidence strength")
+    topic_lines: list[CrossTopicLine]
 
 
 class ReviewEpisode(BaseModel):

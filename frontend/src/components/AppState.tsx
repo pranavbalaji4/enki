@@ -1,19 +1,22 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { api, type NodeOut } from "@/lib/api";
+import { api, type NodeOut, type RunOut } from "@/lib/api";
 
 type AppState = {
   nodes: NodeOut[];
-  newInsights: number;
+  run: RunOut | null;
+  /** Bumps when an analysis run finishes, so pages showing analyzed data can reload. */
+  dataVersion: number;
   backendError: string | null;
   refresh: () => Promise<void>;
+  watchRun: (run: RunOut) => void;
 };
 
 async function fetchState() {
   try {
-    const [tree, insights] = await Promise.all([api.tree(), api.insights("new")]);
-    return { ok: true as const, tree, newInsights: insights.length };
+    const [tree, latest] = await Promise.all([api.tree(), api.latestRun()]);
+    return { ok: true as const, tree, latest };
   } catch {
     return { ok: false as const };
   }
@@ -21,17 +24,20 @@ async function fetchState() {
 
 const Ctx = createContext<AppState | null>(null);
 
+const isActive = (r: RunOut | null) => !!r && (r.status === "queued" || r.status === "running");
+
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [nodes, setNodes] = useState<NodeOut[]>([]);
-  const [newInsights, setNewInsights] = useState(0);
+  const [run, setRun] = useState<RunOut | null>(null);
+  const [dataVersion, setDataVersion] = useState(0);
   const [backendError, setBackendError] = useState<string | null>(null);
 
   const apply = useCallback((r: Awaited<ReturnType<typeof fetchState>>) => {
     if (r.ok) {
       setNodes(r.tree);
-      setNewInsights(r.newInsights);
+      setRun(r.latest);
       setBackendError(null);
-    } else setBackendError("Can't reach the Enki backend. Is it running on port 8000?");
+    } else setBackendError("Can't reach the Enki backend. Start it on port 8000, then reload.");
   }, []);
 
   const refresh = useCallback(async () => apply(await fetchState()), [apply]);
@@ -40,7 +46,29 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     fetchState().then(apply);
   }, [apply]);
 
-  return <Ctx.Provider value={{ nodes, newInsights, backendError, refresh }}>{children}</Ctx.Provider>;
+  // While a run is going, poll its progress; when it ends, reload everything that depends on it.
+  const active = isActive(run);
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(async () => {
+      const next = await api.latestRun().catch(() => null);
+      if (!next) return;
+      setRun(next);
+      if (!isActive(next)) {
+        setNodes(await api.tree().catch(() => []));
+        setDataVersion((v) => v + 1);
+      } else if (next.stage !== run?.stage) {
+        setNodes(await api.tree().catch(() => []));
+      }
+    }, 1500);
+    return () => clearInterval(t);
+  }, [active, run?.stage]);
+
+  const watchRun = useCallback((r: RunOut) => setRun(r), []);
+
+  return (
+    <Ctx.Provider value={{ nodes, run, dataVersion, backendError, refresh, watchRun }}>{children}</Ctx.Provider>
+  );
 }
 
 export function useAppState() {
@@ -49,13 +77,6 @@ export function useAppState() {
   return v;
 }
 
-export function pathOf(nodes: NodeOut[], id: number | null | undefined): NodeOut[] {
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const out: NodeOut[] = [];
-  let cur = id != null ? byId.get(id) : undefined;
-  while (cur) {
-    out.unshift(cur);
-    cur = cur.parent_id != null ? byId.get(cur.parent_id) : undefined;
-  }
-  return out;
+export function runIsActive(run: RunOut | null) {
+  return isActive(run);
 }

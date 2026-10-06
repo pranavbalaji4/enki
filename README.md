@@ -1,6 +1,6 @@
 # Enki
 
-A tutor that learns how you learn. It watches which explanations land for you — judged from your next message — builds a readable, editable profile of what works, and teaches you that way.
+How you learn, read from your own conversations with Claude. Import your claude.ai history; Enki finds the chats where you were learning, judges whether each of Claude's explanations landed (from the message you sent next), sorts everything into a topic tree, and writes up what works for you — globally and per topic. Then ask it questions about how you learn.
 
 ```
 backend/   Python · FastAPI · SQLAlchemy · Anthropic SDK   (port 8000)
@@ -19,7 +19,7 @@ cp .env.example .env                                  # add ANTHROPIC_API_KEY
 .venv/Scripts/python -m uvicorn enki.api:app --port 8000
 ```
 
-No key yet? Set `ENKI_FAKE_LLM=1` in `.env` — every model call is replaced by deterministic heuristics so the whole loop runs offline.
+No key yet? Set `ENKI_FAKE_LLM=1` in `.env` — every model call is replaced by deterministic heuristics so the whole pipeline runs offline (the output is placeholder text).
 
 **Frontend**
 
@@ -29,26 +29,31 @@ npm install
 npm run dev          # http://localhost:3000  (backend URL: NEXT_PUBLIC_API_URL, default http://localhost:8000)
 ```
 
-**Tests** — `cd backend && .venv/Scripts/python -m pytest` (runs the full loop against the fake model).
+**Your data** — in claude.ai: Settings → Privacy → Export data. Upload the ZIP on the Import page. The Anthropic API can't read claude.ai history, so the export is the only way in; your key is used only to analyze it. The Import page shows an upper-bound cost estimate before anything runs, and can analyze just your N most recent chats first.
+
+**Tests** — `cd backend && .venv/Scripts/python -m pytest` (import → analysis → profile → Ask, against the fake model).
 
 **After changing API models** — `cd backend && .venv/Scripts/python scripts/export_openapi.py ../frontend/openapi.json`, then `cd frontend && npm run gen:api`.
 
 ## How it works
 
-1. **Workspace tree** — folders nest freely (CS → Data Structures); chats are leaves (Lec 7: Heaps). A chat's context is its own messages plus the summaries, patterns and "explanations that clicked" of the folders above it — never another chat's raw messages.
-2. **Per turn** (background jobs) — the tagger (`claude-haiku-4-5`) labels *how* each tutor reply explained (analogy, example, formal definition, code…). When you reply, the evaluator judges from your message whether it landed. The chat shows this as the *learning lens*.
-   - **Jev** (TypeSafe's classifier, `enki/evaluators.py`) is the evaluator when `TYPESAFE_API_KEY` is set. It gets `{learner_question, tutor_explanation, learner_next_message}` and answers four questions in one call: a 3-level **Score** (not understood / iffy / understood, with a probability for each), a **Choice** of what the reply shows (built on it, restated it, re-asked, confused…), and two yes/no probabilities (reused the tutor's wording; frustrated). If a Jev call fails it falls back to Claude.
-   - Without a TypeSafe key, Claude (`claude-haiku-4-5`) judges instead. `ENKI_EVALUATOR=auto|jev|claude` overrides the choice.
-   - Before trusting either, label some real turns and run `python scripts/compare_evaluators.py labelled.jsonl` (accuracy, confusion table, and Brier score for Jev's probabilities).
-3. **Wrap up** — the reviewer (`claude-opus-5-5`) splits the session into concepts, finds where each clicked and which explanation did it (correcting for order effects), saves that explanation verbatim, and records evidence for or against patterns at the topic-folder level.
-4. **Patterns** carry Beta(α, β) evidence counts. With ≥3 episodes and a clear lean either way they become **insight cards** you confirm or reject. You can also edit the markdown profile directly; the model translates your edit into pattern changes and tells you how it read it.
-5. **The tutor** (`claude-sonnet-5-5`, streamed) gets the top patterns from the chat's folder chain (nearest folder wins), confirmed ones ranked first.
+An analysis run (`enki/analysis.py`) takes the imported, not-yet-analyzed chats through five resumable stages (2–6 below). Model calls run on a thread pool (`ENKI_ANALYSIS_CONCURRENCY`, `ENKI_REVIEW_CONCURRENCY`); results are written by the job's own thread.
 
-Model IDs, thresholds and the database URL are in `backend/enki/config.py` (overridable via `ENKI_*` env vars). Sonnet/Opus calls use server-side refusal fallbacks (`fallbacks: "default"`).
+1. **Import** (`enki/importer.py`) — parses `conversations.json`, keeps only the main branch of edited/retried conversations, and upserts by claude.ai id: re-uploading adds new chats and re-analyzes changed ones (their old evidence is taken back out first).
+2. **Classify** (`claude-haiku-4-5`) — is this a learning chat or a task? Which domain and topic? Tasks are left out; you can include them from the chat page.
+3. **Topics** (`claude-opus-5-5`) — merges the labels into a Domain → Topic tree, reusing existing names on later imports. Rename topics by double-clicking them in the sidebar.
+4. **Turns** — for every Claude reply: how it explained (analogy, example, formal definition, code…) and whether it landed, judged from your next message as **understood / iffy / not understood** with a probability for each. The last reply of a chat has no next message and is marked `no_signal`.
+   - **Jev** (TypeSafe's classifier, `enki/evaluators.py`) is the judge when `TYPESAFE_API_KEY` is set; its probabilities are calibrated. Otherwise Claude Haiku tags and judges in one call and gives its own (uncalibrated) estimate. `ENKI_EVALUATOR=auto|jev|claude` overrides. The chat page says which judge produced each badge.
+5. **Review** (`claude-opus-5-5`) — splits each chat into concepts, finds where each clicked and which explanation did it, saves that explanation verbatim, and records Beta(α, β) evidence for patterns at the chat's topic.
+6. **Profile** — topic summaries; patterns seen in two or more topics roll up into global patterns (evidence summed); Claude writes the global profile. Patterns with ≥3 episodes and a clear lean become "Does this sound like you?" cards; your answer outweighs any chat.
 
-## MVP simplifications (vs. the plan)
+**Ask** (`enki/ask.py`, `claude-sonnet-5-5`, streamed) answers questions about how you learn with read-only tools over the analyzed data (profile, topics, a topic, search replies by text/level/topic, a chat) and links to the chats it used.
 
-- **Job queue**: a `jobs` table + one in-process worker thread instead of ARQ/Redis (`enki/jobs.py`; handlers are queue-agnostic).
-- **Database**: SQLite by default; set `ENKI_DATABASE_URL` for Postgres. No pgvector yet (no embedding retrieval).
-- **Single user, no auth.**
-- **Not yet built**: pattern promotion up the tree / cross-topic transfer, exploration of non-favored strategies, weekly insight digests, retrieval checks.
+Model IDs, thresholds, prices for the estimate and the database URL are in `backend/enki/config.py` (overridable via `ENKI_*` env vars). Opus/Sonnet calls use server-side refusal fallbacks (`fallbacks: "default"`).
+
+## MVP simplifications
+
+- **Job queue**: a `jobs` table + one in-process worker thread instead of ARQ/Redis (`enki/jobs.py`).
+- **Database**: SQLite by default; set `ENKI_DATABASE_URL` for Postgres. No migrations: new nullable columns are added on startup.
+- **Single user, no auth.** Data stays local except what is sent to the Anthropic (and, with a key, TypeSafe) API.
+- **Not yet built**: Claude Code transcripts as a second source, the Message Batches API for cheaper bulk analysis, deeper topic hierarchies, weekly digests.

@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     # Deterministic offline stand-in for every model call (dev without a key, tests).
     fake_llm: bool = False
 
-    tutor_model: str = "claude-sonnet-5-5"   # streams replies to the learner
-    fast_model: str = "claude-haiku-4-5"     # per-turn strategy tagging + understanding evaluation
-    deep_model: str = "claude-opus-5-5"      # session review, profile-edit interpretation
+    ask_model: str = "claude-sonnet-5-5"     # the "ask about how I learn" chat (streamed, tool use)
+    fast_model: str = "claude-haiku-4-5"     # chat classification + per-turn tagging/understanding
+    deep_model: str = "claude-opus-5-5"      # topic tree, chat review, global profile, profile-edit interpretation
 
     # Who judges "did that explanation land?" from the learner's next message.
     # auto = Jev when TYPESAFE_API_KEY is set (falling back to Claude if a Jev call fails), else Claude.
@@ -30,9 +30,17 @@ class Settings(BaseSettings):
     # A pattern needs this many episodes of evidence before it becomes an insight card.
     insight_min_evidence: int = 3
     insight_min_confidence: float = 0.65
-    # Max patterns / sticky explanations injected into the tutor prompt.
-    profile_top_k: int = 8
-    sticky_top_k: int = 5
+    # Model calls in flight at once while analyzing an import (fast model / deep model).
+    analysis_concurrency: int = 4
+    review_concurrency: int = 2
+    max_upload_mb: int = 500
+
+    # $ per million tokens (input, output), for the pre-analysis cost estimate only.
+    prices: dict[str, tuple[float, float]] = {
+        "claude-haiku-4-5": (1.0, 5.0),
+        "claude-sonnet-5-5": (2.0, 10.0),
+        "claude-opus-5-5": (4.0, 20.0),
+    }
 
 
 settings = Settings()

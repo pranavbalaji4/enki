@@ -1,7 +1,6 @@
 """All model calls go through here. `get_llm()` returns the real client or a deterministic fake (ENKI_FAKE_LLM=1)."""
 
 import re
-from collections.abc import Iterator
 from functools import lru_cache
 from typing import Protocol, TypeVar
 
@@ -11,13 +10,19 @@ from pydantic import BaseModel
 from . import prompts
 from .config import settings
 from .llm_schemas import (
+    ChatClassification,
     EvalResult,
     FolderSummary,
+    GlobalProfile,
     PatternObservation,
     ProfileEditResult,
     ReviewEpisode,
     SessionReview,
     TagResult,
+    TopicDomain,
+    TopicLeaf,
+    TopicTree,
+    TurnAnalysis,
 )
 from .taxonomy import VERDICT_SCORE
 
@@ -32,9 +37,12 @@ class LLMError(RuntimeError):
 
 
 class LLM(Protocol):
-    def stream_tutor(self, system: str, messages: list[dict]) -> Iterator[str]: ...
     def tag_turn(self, user_msg: str, reply: str) -> TagResult: ...
     def evaluate_turn(self, user_msg: str, reply: str, next_msg: str) -> EvalResult: ...
+    def analyze_turn(self, user_msg: str, reply: str, next_msg: str) -> TurnAnalysis: ...
+    def classify_chat(self, title: str, opening: str) -> ChatClassification: ...
+    def build_topic_tree(self, existing: str, labels: list[str]) -> TopicTree: ...
+    def write_global_profile(self, evidence: str, topic_ids: list[int]) -> GlobalProfile: ...
     def review_session(self, transcript: str, patterns: str, message_ids: list[int]) -> SessionReview: ...
     def update_folder_summary(self, folder: str, old: str, session_summary: str) -> FolderSummary: ...
     def interpret_profile_edit(self, old_md: str, new_md: str, patterns: str) -> ProfileEditResult: ...
@@ -45,22 +53,6 @@ class ClaudeLLM:
         # With no explicit key the SDK resolves ANTHROPIC_API_KEY / auth token / `ant auth login` profile.
         key = settings.anthropic_api_key
         self.client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
-
-    def stream_tutor(self, system: str, messages: list[dict]) -> Iterator[str]:
-        with self.client.beta.messages.stream(
-            model=settings.tutor_model,
-            max_tokens=16000,
-            system=system,
-            messages=messages,
-            output_config={"effort": "medium"},
-            cache_control={"type": "ephemeral"},
-            betas=[FALLBACK_BETA],
-            fallbacks="default",
-        ) as stream:
-            yield from stream.text_stream
-            final = stream.get_final_message()
-        if final.stop_reason == "refusal":
-            raise LLMError("The tutor declined to answer this message.")
 
     def _fast(self, system: str, user: str, schema: type[T]) -> T:
         resp = self.client.messages.parse(
@@ -99,6 +91,19 @@ class ClaudeLLM:
     def evaluate_turn(self, user_msg: str, reply: str, next_msg: str) -> EvalResult:
         return self._fast(prompts.EVALUATOR_SYSTEM, prompts.evaluator_user(user_msg, reply, next_msg), EvalResult)
 
+    def analyze_turn(self, user_msg: str, reply: str, next_msg: str) -> TurnAnalysis:
+        return self._fast(prompts.ANALYZE_SYSTEM, prompts.evaluator_user(user_msg, reply, next_msg), TurnAnalysis)
+
+    def classify_chat(self, title: str, opening: str) -> ChatClassification:
+        return self._fast(prompts.CLASSIFY_SYSTEM, prompts.classify_user(title, opening), ChatClassification)
+
+    def build_topic_tree(self, existing: str, labels: list[str]) -> TopicTree:
+        numbered = "\n".join(f"[{i}] {label}" for i, label in enumerate(labels))
+        return self._deep(prompts.TOPIC_TREE_SYSTEM, prompts.topic_tree_user(existing, numbered), TopicTree)
+
+    def write_global_profile(self, evidence: str, topic_ids: list[int]) -> GlobalProfile:
+        return self._deep(prompts.GLOBAL_PROFILE_SYSTEM, prompts.global_profile_user(evidence), GlobalProfile)
+
     def review_session(self, transcript: str, patterns: str, message_ids: list[int]) -> SessionReview:
         return self._deep(prompts.REVIEW_SYSTEM, prompts.review_user(transcript, patterns), SessionReview)
 
@@ -111,17 +116,6 @@ class ClaudeLLM:
 
 class FakeLLM:
     """Keyword heuristics standing in for the models so the whole loop runs offline."""
-
-    def stream_tutor(self, system: str, messages: list[dict]) -> Iterator[str]:
-        question = messages[-1]["content"]
-        reply = (
-            f"Let's take \"{question[:60]}\" step by step. "
-            "Think of it like a line at a coffee shop: the first person in is the first served. "
-            "For example, if A, B, then C arrive, A is handled first. "
-            "Formally, this is a first-in-first-out ordering. Does that match what you expected?"
-        )
-        for word in reply.split(" "):
-            yield word + " "
 
     def tag_turn(self, user_msg: str, reply: str) -> TagResult:
         low = reply.lower()
@@ -162,12 +156,59 @@ class FakeLLM:
             verdict = "ambiguous_ack"
         else:
             verdict = "builds_on"
+        u = VERDICT_SCORE[verdict]
+        level = 2 if u >= 0.75 else 1 if u >= 0.45 else 0
+        probs = [0.15, 0.15, 0.15]
+        probs[level] = 0.7
         return EvalResult(
             verdict=verdict,
-            understanding=VERDICT_SCORE[verdict],
+            level_probs=probs,
+            understanding=u,
             confidence=0.6,
             referenced_part="",
             reasoning=f"offline heuristic: {verdict}",
+        )
+
+    def analyze_turn(self, user_msg: str, reply: str, next_msg: str) -> TurnAnalysis:
+        return TurnAnalysis(tag=self.tag_turn(user_msg, reply), evaluation=self.evaluate_turn(user_msg, reply, next_msg))
+
+    # Keyword -> (domain, topic). Anything else is a task, not learning.
+    _TOPICS = [
+        (("queue", "stack", "heap", "tree", "linked list", "hash"), ("Computer Science", "Data Structures")),
+        (("recursion", "big o", "algorithm", "sort"), ("Computer Science", "Algorithms")),
+        (("bond", "stock", "interest", "inflation", "option"), ("Finance", "Markets")),
+        (("kant", "ethics", "free will", "plato", "philosoph"), ("Philosophy", "Ethics")),
+    ]
+
+    def classify_chat(self, title: str, opening: str) -> ChatClassification:
+        low = f"{title}\n{opening}".lower()
+        for keys, (domain, topic) in self._TOPICS:
+            if any(k in low for k in keys):
+                return ChatClassification(is_learning=True, domain=domain, topic=topic)
+        return ChatClassification(is_learning=False, domain="Other", topic="Tasks")
+
+    def build_topic_tree(self, existing: str, labels: list[str]) -> TopicTree:
+        domains: dict[str, dict[str, list[int]]] = {}
+        for i, label in enumerate(labels):
+            domain, _, topic = label.partition(" / ")
+            domains.setdefault(domain, {}).setdefault(topic.split(" (")[0], []).append(i)
+        return TopicTree(
+            domains=[
+                TopicDomain(name=d, topics=[TopicLeaf(name=t, label_ids=ids) for t, ids in topics.items()])
+                for d, topics in domains.items()
+            ]
+        )
+
+    def write_global_profile(self, evidence: str, topic_ids: list[int]) -> GlobalProfile:
+        from .llm_schemas import CrossTopicLine
+
+        return GlobalProfile(
+            headline="Offline profile: everyday analogies tend to land for you.",
+            summary_md=(
+                "**Offline mode.** This summary is a placeholder written without a model. With an API key, this is "
+                "where Claude describes how you learn across your topics, and how strong the evidence is."
+            ),
+            topic_lines=[CrossTopicLine(topic_id=t, line="Analogies helped here.") for t in topic_ids],
         )
 
     def review_session(self, transcript: str, patterns: str, message_ids: list[int]) -> SessionReview:

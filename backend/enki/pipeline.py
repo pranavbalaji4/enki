@@ -1,59 +1,98 @@
-"""Background analysis: tag each tutor turn, evaluate it against the learner's next turn, review whole sessions.
+"""Per-chat analysis: tag each Claude reply and judge whether it landed, then review whole chats into episodes,
+explanations that clicked, and pattern evidence.
 
-Every handler calls the model BEFORE writing anything, so no database write lock is held during a model call."""
+Each step is split into a pure model call (`*_call`, safe to run on a worker thread, touches no database) and a
+write (`apply_*`, run on the thread that owns the session), so a run can keep several model calls in flight."""
+
+from dataclasses import dataclass
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .context import patterns_for_prompt, path_title, scope_for_session
-from .evaluators import get_evaluator
-from .jobs import handler
+from .context import patterns_for_prompt
+from .evaluators import ClaudeEvaluator, Judgement, get_evaluator, judgement_from_eval
 from .llm import get_llm
+from .llm_schemas import SessionReview, TagResult
 from .models import Episode, Insight, Message, Node, Pattern, PatternEvidence, StickyExplanation, TurnAnnotation
+from .taxonomy import NO_SIGNAL
+
+# Long replies are cut to head + tail before analysis; what a reply opens and closes with is what the learner reacts to.
+MAX_TURN_CHARS = 12000
+MAX_TRANSCRIPT_MSG_CHARS = 6000
 
 
-def _annotation(db: Session, msg: Message) -> TurnAnnotation:
-    ann = db.scalars(select(TurnAnnotation).where(TurnAnnotation.message_id == msg.id)).first()
+def trim(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    return text[:half] + "\n[…]\n" + text[-half:]
+
+
+# ---------- turns ----------
+
+@dataclass
+class TurnInput:
+    message_id: int
+    session_id: int
+    question: str
+    reply: str
+    next_id: int | None
+    next_msg: str | None
+
+
+def turn_inputs(db: Session, session_ids: list[int]) -> list[TurnInput]:
+    """Every Claude reply in these chats that hasn't been analyzed yet, with the user turns around it."""
+    done = set(
+        db.scalars(
+            select(TurnAnnotation.message_id).where(
+                TurnAnnotation.session_id.in_(session_ids), TurnAnnotation.verdict.is_not(None)
+            )
+        )
+    )
+    out = []
+    for sid in session_ids:
+        msgs = list(db.scalars(select(Message).where(Message.session_id == sid).order_by(Message.id)))
+        for i, m in enumerate(msgs):
+            if m.role != "assistant" or m.id in done:
+                continue
+            prev = next((p for p in reversed(msgs[:i]) if p.role == "user"), None)
+            nxt = next((n for n in msgs[i + 1:] if n.role == "user"), None)
+            out.append(
+                TurnInput(m.id, sid, prev.content if prev else "", m.content, nxt.id if nxt else None, nxt.content if nxt else None)
+            )
+    return out
+
+
+def analyze_turn_call(t: TurnInput) -> tuple[TagResult, Judgement | None]:
+    """With the Claude evaluator, tagging and judging share one call; Jev judges separately."""
+    question, reply = trim(t.question, MAX_TURN_CHARS), trim(t.reply, MAX_TURN_CHARS)
+    llm = get_llm()
+    if t.next_msg is None:
+        return llm.tag_turn(question, reply), None
+    next_msg = trim(t.next_msg, MAX_TURN_CHARS)
+    evaluator = get_evaluator()
+    if isinstance(evaluator, ClaudeEvaluator):
+        r = llm.analyze_turn(question, reply, next_msg)
+        return r.tag, judgement_from_eval(r.evaluation)
+    return llm.tag_turn(question, reply), evaluator.judge(question, reply, next_msg)
+
+
+def apply_turn(db: Session, t: TurnInput, tag: TagResult, j: Judgement | None) -> None:
+    ann = db.scalars(select(TurnAnnotation).where(TurnAnnotation.message_id == t.message_id)).first()
     if ann is None:
-        ann = TurnAnnotation(message_id=msg.id, session_id=msg.session_id, strategies=[])
+        ann = TurnAnnotation(message_id=t.message_id, session_id=t.session_id, strategies=[])
         db.add(ann)
-    return ann
-
-
-def _previous_user_text(db: Session, msg: Message) -> str:
-    prev = db.scalars(
-        select(Message)
-        .where(Message.session_id == msg.session_id, Message.role == "user", Message.id < msg.id)
-        .order_by(Message.id.desc())
-        .limit(1)
-    ).first()
-    return prev.content if prev else ""
-
-
-@handler("tag_turn")
-def tag_turn(db: Session, payload: dict) -> None:
-    msg = db.get(Message, payload["message_id"])
-    if msg is None:
+    ann.concept = tag.concept
+    ann.concept_type = tag.concept_type
+    ann.strategies = list(tag.strategies)
+    ann.ordering = tag.ordering
+    ann.abstraction = tag.abstraction
+    if j is None:
+        # The chat ended on this reply: nothing to judge it by.
+        ann.verdict = NO_SIGNAL
         return
-    result = get_llm().tag_turn(_previous_user_text(db, msg), msg.content)
-    ann = _annotation(db, msg)
-    ann.concept = result.concept
-    ann.concept_type = result.concept_type
-    ann.strategies = list(result.strategies)
-    ann.ordering = result.ordering
-    ann.abstraction = result.abstraction
-
-
-@handler("evaluate_turn")
-def evaluate_turn(db: Session, payload: dict) -> None:
-    reply = db.get(Message, payload["assistant_id"])
-    nxt = db.get(Message, payload["next_id"])
-    if reply is None or nxt is None:
-        return
-    j = get_evaluator().judge(_previous_user_text(db, reply), reply.content, nxt.content)
-    ann = _annotation(db, reply)
-    ann.next_message_id = nxt.id
+    ann.next_message_id = t.next_id
     ann.verdict = j.verdict
     ann.understanding = j.understanding
     ann.confidence = j.confidence
@@ -64,28 +103,31 @@ def evaluate_turn(db: Session, payload: dict) -> None:
     ann.signals = j.signals or None
 
 
-def build_transcript(messages: list[Message], anns: dict[int, TurnAnnotation]) -> str:
+# ---------- chat review ----------
+
+def build_transcript(messages: list[Message], anns: dict[int, TurnAnnotation], max_chars: int | None = None) -> str:
     out = []
     for m in messages:
+        content = trim(m.content, max_chars) if max_chars else m.content
         if m.role == "user":
-            out.append(f"[#{m.id} learner]\n{m.content}\n")
+            out.append(f"[#{m.id} learner]\n{content}\n")
             continue
         a = anns.get(m.id)
         meta = ""
         if a:
             meta = f" | concept={a.concept} | strategies={','.join(a.strategies or [])} | ordering={a.ordering}"
-            if a.verdict:
+            if a.verdict and a.verdict != NO_SIGNAL:
                 meta += f" | verdict={a.verdict} u={a.understanding:.2f} conf={a.confidence:.2f}"
             if a.level_probs:
                 meta += " | p(not,iffy,understood)=" + ",".join(f"{p:.2f}" for p in a.level_probs)
             for name, p in (a.signals or {}).items():
                 meta += f" | p({name})={p:.2f}"
-        out.append(f"[#{m.id} tutor{meta}]\n{m.content}\n")
+        out.append(f"[#{m.id} tutor{meta}]\n{content}\n")
     return "\n".join(out)
 
 
-def _undo_previous_review(db: Session, session_id: int) -> None:
-    """Re-reviewing a session replaces its episodes; take their evidence back out of the pattern stats first."""
+def undo_review(db: Session, session_id: int) -> None:
+    """Re-reviewing a chat replaces its episodes; take their evidence back out of the pattern stats first."""
     old_eps = list(db.scalars(select(Episode.id).where(Episode.session_id == session_id)))
     if old_eps:
         for ev in db.scalars(select(PatternEvidence).where(PatternEvidence.episode_id.in_(old_eps))):
@@ -105,38 +147,40 @@ def scope_patterns(db: Session, scope_id: int | None) -> list[Pattern]:
     return list(db.scalars(q))
 
 
-@handler("review_session")
-def review_session(db: Session, payload: dict) -> None:
-    session = db.get(Node, payload["session_id"])
-    if session is None:
-        return
+@dataclass
+class ReviewInput:
+    session_id: int
+    scope_id: int | None
+    transcript: str
+    patterns: str
+    message_ids: list[int]
+
+
+def review_input(db: Session, session: Node) -> ReviewInput | None:
     messages = list(db.scalars(select(Message).where(Message.session_id == session.id).order_by(Message.id)))
     if not messages:
-        session.status = "active"
+        return None
+    anns = {a.message_id: a for a in db.scalars(select(TurnAnnotation).where(TurnAnnotation.session_id == session.id))}
+    scope_id = session.parent_id  # patterns are learned at the chat's topic
+    return ReviewInput(
+        session_id=session.id,
+        scope_id=scope_id,
+        transcript=build_transcript(messages, anns, MAX_TRANSCRIPT_MSG_CHARS),
+        patterns=patterns_for_prompt([p for p in scope_patterns(db, scope_id) if p.status == "active"]),
+        message_ids=[m.id for m in messages],
+    )
+
+
+def review_call(inp: ReviewInput) -> SessionReview:
+    return get_llm().review_session(inp.transcript, inp.patterns, inp.message_ids)
+
+
+def apply_review(db: Session, inp: ReviewInput, review: SessionReview) -> None:
+    session = db.get(Node, inp.session_id)
+    if session is None:
         return
-    anns = {
-        a.message_id: a
-        for a in db.scalars(select(TurnAnnotation).where(TurnAnnotation.session_id == session.id))
-    }
-    scope_id = scope_for_session(session)
-    existing = scope_patterns(db, scope_id)
-    valid_ids = {m.id for m in messages}
-
-    llm = get_llm()
-    review = llm.review_session(
-        build_transcript(messages, anns),
-        patterns_for_prompt([p for p in existing if p.status == "active"]),
-        [m.id for m in messages],
-    )
-    folder = db.get(Node, scope_id) if scope_id is not None else None
-    folder_summary = (
-        llm.update_folder_summary(path_title(db, folder), folder.summary, review.session_summary).summary
-        if folder is not None
-        else None
-    )
-
-    # ---- write phase ----
-    _undo_previous_review(db, session.id)
+    undo_review(db, session.id)
+    valid_ids = set(inp.message_ids)
 
     episodes: list[Episode] = []
     for e in review.episodes:
@@ -168,6 +212,9 @@ def review_session(db: Session, payload: dict) -> None:
                 )
             )
 
+    # Read the scope's patterns now, not when the review was requested: another review in the same topic may have
+    # created one in between, and two patterns for the same strategy would split the evidence.
+    existing = scope_patterns(db, inp.scope_id)
     by_id = {p.id: p for p in existing}
     by_key = {(p.strategy, p.concept_type): p for p in existing}
     touched: dict[int, Pattern] = {}
@@ -179,7 +226,7 @@ def review_session(db: Session, payload: dict) -> None:
         p = by_id.get(o.existing_pattern_id) if o.existing_pattern_id is not None else None
         p = p or by_key.get((o.strategy, o.concept_type))
         if p is None:
-            p = Pattern(scope_node_id=scope_id, claim=o.claim, strategy=o.strategy, concept_type=o.concept_type)
+            p = Pattern(scope_node_id=inp.scope_id, claim=o.claim, strategy=o.strategy, concept_type=o.concept_type)
             db.add(p)
             db.flush()
             by_id[p.id] = p
@@ -195,25 +242,14 @@ def review_session(db: Session, payload: dict) -> None:
         touched[p.id] = p
 
     session.summary = review.session_summary
-    session.status = "reviewed"
-    if folder is not None and folder_summary is not None:
-        folder.summary = folder_summary
-
-    db.add(
-        Insight(
-            node_id=scope_id,
-            session_id=session.id,
-            kind="recap",
-            title=review.recap_title,
-            body=review.recap_body,
-        )
-    )
+    session.status = "analyzed"
+    db.add(Insight(node_id=inp.scope_id, session_id=session.id, kind="recap", title=review.recap_title, body=review.recap_body))
     db.flush()
     for p in touched.values():
-        _maybe_surface(db, p)
+        maybe_surface(db, p)
 
 
-def _maybe_surface(db: Session, p: Pattern) -> None:
+def maybe_surface(db: Session, p: Pattern) -> None:
     """Turn a pattern into an insight card once it has enough evidence, in either direction."""
     if p.surfaced or p.user_status != "unreviewed" or p.evidence_count < settings.insight_min_evidence:
         return

@@ -94,41 +94,39 @@ def test_falls_back_to_claude_when_jev_fails():
     stub = StubClassifier(error=TypeSafeAPIConnectionError("network down"))
     j = FallbackEvaluator(JevEvaluator(stub), ClaudeEvaluator()).judge("What is a queue?", "Like a line…", "I don't get it")
     assert j.evaluator == "fake"  # the offline stand-in for Claude answered
-    assert j.verdict == "confusion" and j.level_probs is None
+    assert j.verdict == "confusion" and len(j.level_probs) == 3
 
 
 def test_pipeline_stores_jev_distribution(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from enki.api import app
-    from enki.jobs import run_pending
-    from tests.test_flow import chat, make_session
+    from tests.test_flow import analyze, chat_id, export_zip, upload
 
     enki_db.configure(f"sqlite:///{tmp_path / 'jev.db'}")
     enki_db.init_db()
     import enki.pipeline
 
-    monkeypatch.setattr(enki.pipeline, "get_evaluator", lambda: JevEvaluator(StubClassifier(jev_response())))
+    stub = StubClassifier(jev_response())
+    monkeypatch.setattr(enki.pipeline, "get_evaluator", lambda: JevEvaluator(stub))
 
     client = TestClient(app)
-    _, _, sess = make_session(client)
-    chat(client, sess["id"], "What is a heap?")
-    chat(client, sess["id"], "So the smallest is always on top?")
-    run_pending()
+    upload(client, export_zip())
+    assert analyze(client)["status"] == "done"
 
-    s = client.get(f"/api/sessions/{sess['id']}").json()
-    (ann,) = [a for a in s["annotations"] if a["verdict"]]
+    s = client.get(f"/api/chats/{chat_id(client, 'Stacks')}").json()
+    (ann,) = [a for a in s["annotations"] if a["verdict"] != "no_signal"]
     assert ann["evaluator"] == "jev"
     assert ann["level_probs"] == [0.05, 0.15, 0.8]
     assert ann["signals"]["reused_explanation"] == 0.9
+    # Jev saw the reply and the learner's next message.
+    assert any(r["state"]["learner_next_message"] == "So the last one in comes out first?" for r in stub.requests)
 
-    from enki.models import Message
+    from enki.models import Message, TurnAnnotation
     from enki.pipeline import build_transcript
 
     with enki_db.SessionLocal() as db:
-        from enki.models import TurnAnnotation
-
-        msgs = db.query(Message).order_by(Message.id).all()
+        msgs = db.query(Message).filter(Message.session_id == s["chat"]["id"]).order_by(Message.id).all()
         anns = {a.message_id: a for a in db.query(TurnAnnotation)}
         transcript = build_transcript(msgs, anns)
     assert "p(not,iffy,understood)=0.05,0.15,0.80" in transcript
